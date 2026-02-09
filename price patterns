@@ -328,6 +328,56 @@ def three_line_strike(df):
     )
 
 
+
+def three_line_strike_1(df):
+    avgH21_3 = df["High"].rolling(21).mean()[-4]
+    avgL21_3 = df["Low"].rolling(21).mean()[-4]
+
+    avgH21_2 = df["High"].rolling(21).mean()[-3]
+    avgL21_2 = df["Low"].rolling(21).mean()[-3]
+
+    avgH21_1 = df["High"].rolling(21).mean()[-2]
+    avgL21_1 = df["Low"].rolling(21).mean()[-2]
+
+    C3 = df["Close"][-4]
+    O3 = df["Open"][-4]
+    H3 = df["High"][-4]
+    L3 = df["Open"][-4]
+
+    C2 = df["Close"][-3]
+    H2 = df["High"][-3]
+    L2 = df["Open"][-3]
+
+    C1 = df["Close"][-2]
+    H1 = df["High"][-2]
+    L1 = df["Open"][-2]
+    C = df["Close"][-1]
+    Op = df["Open"][-1]
+
+    return (
+        C2 > C3
+        and C1 > C2
+        and H3 - L3 > avgH21_3 - avgL21_3
+        and H2 - L2 > avgH21_2 - avgL21_2
+        and H1 - L1 > avgH21_1 - avgL21_1
+        and Op > O3
+        and C < O3
+    )
+
+def spike(DF, n, k):
+    """
+    SPIKE=high[1]-highest(high,n)
+          [2]>2*average(true range,n)[2] and
+          high[1]-high>k*average(true range,n)[2]
+    k= 0.75 to 2
+    """
+    H1 = DF["High"][-2]
+    HH = DF["High"].rolling(n).max()[-3]
+    H = DF["High"][-1]
+    avg_atr_value = atr(DF, n)[-3]
+
+    return (H1 - HH > 2 * avg_atr_value) and (H1 - H > k * avg_atr_value)
+
 # <--------------------- BULLISH PATTERNS -------------------------->
 
 
@@ -2045,6 +2095,25 @@ def bullish_wrd_ic_bearish_oc(df):
     ):
         return True
 
+def atr_above_ema(df, period=14):
+    atr_period = df.ATR
+    ema = df.EMA_ATR
+    if atr_period[-1] > ema[-1]:
+        return True
+    else:
+        return False
 
+# carry_forward = true 
+
+def close_and_closing_avg_condition(df, period):
+    # If the close is above the 25-day closing average
+    # Period can be 25 and 40
+    close = df["Close"][:-1]
+    closing_avg = close[-period:].mean()
+    if close[-2] > closing_avg:
+        return True
+
+    else:
+        return False
 
         
