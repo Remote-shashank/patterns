@@ -1,3 +1,7 @@
+# divergence of momentum indicators
+
+
+
 def rsi_condition_opposite(df):
 
     val = df.RSI[-1]
