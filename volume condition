@@ -1,3 +1,6 @@
+add divergence/hidden divergence of volume oscillating indicators as volume conditions
+
+
 def stochastic_volume_condition_opposite(df):
 
     val = df.STOCHASTIC_VOLUME.iloc[-1]
