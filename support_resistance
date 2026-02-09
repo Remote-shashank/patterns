@@ -1238,5 +1238,847 @@ def support_resistance_new_dbscan(df):
 
 
 
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from queue import Queue
+from warnings import filterwarnings
+filterwarnings('ignore')
+from tqdm.auto import tqdm
+
+
+from Data_Handler.Data import Priliminary_DataHandler
+
+
+from Event.Events import *
+from Packages.indicators import atr,true_range,ema
+from Packages.indicators import Cuts,isResistance,isSupport,psar
+from Packages.indicators import Bear_Gap,Bull_Gap
+from scipy.signal import argrelextrema
+
+
+
+
+############################################# ORDERBLOCK INDICATOR SIMPLE ###############################
+
+class OrderBlock_Indicator_Simple():
+    def __init__(self,events,data):
+        self.events = events
+        self.data = data
+        self.symbol_list = data.symbol_list
+        self.breakout_max = None
+        self.breakout_min = None
+        self.last_min = None
+        self.last_max = None
+        self.last_ob_buy = None
+        self.last_ob_sell = None
+        self.register =  pd.DataFrame(columns=['breakout','ob_candle','fractal']).set_index('ob_candle')
+
+    def find_pivots(self):
+        for symbol in self.symbol_list:
+            price = self.data.latest_symbol_data[symbol].Close
+
+            try:
+                max_idx = list(argrelextrema(price.values,np.greater,order=10)[0])
+                if self.last_max != max_idx[-1]:
+                    self.last_max = max_idx[-1]
+                    self.last_ob_buy = None
+            except IndexError:
+                pass
+
+            try:
+                min_idx = list(argrelextrema(price.values,np.less,order=10)[0])
+                if self.last_min != min_idx[-1]:
+                    self.last_min = min_idx[-1]
+                    self.last_ob_sell = None
+            except IndexError:
+                pass
+
+    def find_breakout(self):
+
+        for symbol in self.symbol_list:
+            df = self.data.latest_symbol_data[symbol]
+
+            #UP BREAKOUT OF ORDERBLOCK
+            if self.last_ob_buy is None and self.last_max is not None and self.last_max not in self.register.fractal.values:
+                high = df.iloc[self.last_max]
+                cur_idx = df.iloc[-1].name
+                #print('Fractal:',high.name,' Current: ',cur_idx)
+                if df.loc[cur_idx].Close > high.High:
+                    for j in df.iloc[-2:self.last_max+1:-1].iterrows():
+                        if j[1].Open > j[1].Close:
+                            self.breakout_max = True
+                            self.register.loc[j[0],'breakout'] = cur_idx
+                            self.register.loc[j[0],'fractal'] = self.last_max
+                            self.last_ob_buy =  j[0]
+                            #print('UP: ',df.iloc[self.last_max].name,self.last_ob_buy,cur_idx,sep='|')
+                            return True
+                    break
+
+            #DOWN BREAKOUT FOR ORDERBLOCK
+            if self.last_ob_sell is None and self.last_min is not None and self.last_min not in self.register.fractal.values:
+                low = df.iloc[self.last_min]
+                cur_idx = df.iloc[-1].name
+                #print('Fractal:',low.name,' Current: ',cur_idx)
+                if df.loc[cur_idx].Close < low.Low:
+                    for j in df.iloc[-2:self.last_min+1:-1].iterrows():
+                        if j[1].Open < j[1].Close:
+                            self.breakout_min = True
+                            self.register.loc[j[0],'breakout'] = cur_idx
+                            self.register.loc[j[0],'fractal'] = self.last_min
+                            self.last_ob_sell =  j[0]
+                            #print('UP: ',df.iloc[self.last_min].name,self.last_ob_sell,cur_idx,sep='|')
+                            return True
+                    break
+
+    def find_ob(self):
+        self.find_pivots()
+        if self.find_breakout():
+            return self.last_ob_buy,self.last_ob_sell
+        else:
+            return False
+
+############################################# ORDERBLOCK INDICATOR TWO ###############################
+
+class OrderBlock_Indicator():
+    def __init__(self,events,data):
+        self.events = events
+        self.data = data
+        self.symbol_list = data.symbol_list
+        self.breakout_max = None
+        self.breakout_min = None
+        self.last_min = None
+        self.last_max = None
+        self.last_ob_buy = None
+        self.last_ob_sell = None
+        self.register =  pd.DataFrame(columns=['breakout','ob_candle','fractal']).set_index('ob_candle')
+
+    def find_pivots(self):
+        for symbol in self.symbol_list:
+            price = self.data.latest_symbol_data[symbol].Close
+
+        try:
+            max_idx = list(argrelextrema(price.values,np.greater,order=3)[0])
+            if self.last_max != max_idx[-1]:
+                self.last_max = max_idx[-1]
+                self.last_ob_buy = None
+        except IndexError:
+            pass
+
+        try:
+            min_idx = list(argrelextrema(price.values,np.less,order=3)[0])
+            if self.last_min != min_idx[-1]:
+                self.last_min = min_idx[-1]
+                self.last_ob_sell = None
+        except IndexError:
+            pass
+
+    def find_breakout(self):
+
+        for symbol in self.symbol_list:
+            df = self.data.latest_symbol_data[symbol]
+
+            #For up breakout
+            if self.last_ob_buy is None and self.last_max is not None and self.last_max not in self.register.fractal.values:
+                high = df.iloc[self.last_max]
+                cur_idx = df.iloc[-1].name
+                #print('Fractal:',high.name,' Current: ',cur_idx)
+                if df.loc[cur_idx].Close > high.High:
+                    for j in df.iloc[-3:self.last_max+1:-1].iterrows():
+                        indx = df.index.get_loc(j[0])
+                        if isSupport(df,indx):
+                            #print('Support:',j[0])                              ## j is support
+                            for k in df.iloc[indx+1:].loc[:cur_idx].iterrows():
+                                if k[1].Open > k[1].Close:
+                                    self.breakout_max = True
+                                    self.register.loc[j[0],'breakout'] = cur_idx
+                                    self.register.loc[j[0],'fractal'] = self.last_max
+                                    self.last_ob_buy =  k[0]
+                                    #print('UP: ',df.iloc[self.last_max].name,self.last_ob_buy,cur_idx,sep='|')
+                                    return True
+
+                            for k in df.iloc[indx:self.last_max:-1].iterrows():
+                                if k[1].Open > k[1].Close:
+                                    self.breakout_max = True
+                                    self.register.loc[j[0],'breakout'] = cur_idx
+                                    self.register.loc[j[0],'fractal'] = self.last_max
+                                    self.last_ob_buy =  k[0]
+                                    #print('UP: ',df.iloc[self.last_max].name,self.last_ob_buy,cur_idx,sep='|')
+                                    return True
+                            break
+
+            #For down breakout
+            if self.last_ob_sell is None and self.last_min is not None and self.last_min not in self.register.fractal.values:
+                low = df.iloc[self.last_min]
+                cur_idx = df.iloc[-1].name
+                #print('Fractal:',low.name,' Current: ',cur_idx)
+                if df.loc[cur_idx].Close < low.Low:
+                    for j in df.iloc[-3:self.last_min+1:-1].iterrows():
+                        indx = df.index.get_loc(j[0])
+                        if isResistance(df,indx):
+                            #print('Resistance:',j[0])                              ## j is resistance
+                            for k in df.iloc[indx+1:].loc[:cur_idx].iterrows():
+                                if k[1].Open < k[1].Close:
+                                    self.breakout_min = True
+                                    self.register.loc[j[0],'breakout'] = cur_idx
+                                    self.register.loc[j[0],'fractal'] = self.last_min
+                                    self.last_ob_sell =  k[0]
+                                    #print('UP: ',df.iloc[self.last_min].name,self.last_ob_sell,cur_idx,sep='|')
+                                    return True
+
+                            for k in df.iloc[indx:self.last_min:-1].iterrows():
+                                if k[1].Open < k[1].Close:
+                                    self.breakout_min = True
+                                    self.register.loc[j[0],'breakout'] = cur_idx
+                                    self.register.loc[j[0],'fractal'] = self.last_min
+                                    self.last_ob_sell =  k[0]
+                                    #print('UP: ',df.iloc[self.last_min].name,self.last_ob_sell,cur_idx,sep='|')
+                                    return True
+                            break
+
+    def find_ob(self):
+        self.find_pivots()
+        if self.find_breakout():
+            return self.last_ob_buy,self.last_ob_sell
+        else:
+            return False
+
+
+
+############################################# MULTIPLE LEG PORTFOLIO ###############################
+
+from math import floor
+
+
+class Portfolio_Normal_CPR():
+    def __init__(self,data,events,initial_capital=1000000):
+        self.data = data
+        self.events = events
+        self.symbol_list = self.data.symbol_list
+        self.initial_capital = initial_capital
+        self.capital = self.initial_capital
+        self.unrealised = 0
+        self.open_positions = None
+        self.signal_book = pd.DataFrame(columns=['order_id']).set_index('order_id')
+        self.order_book = pd.DataFrame(columns=['strategy','order_id','direction','entry_date','stop_loss','profit',
+                                              'entry_price','exit_price','exit_date','symbol','quantity',
+                                                'commission']).set_index('order_id')
+        self.last_candle()
+        self.total_quantity = {}
+        self.commission = 0
+
+    def Lot_Size(self,symbol,stop_loss,entry_price,margin,direction):
+        '''Just returns quantity by CPR-model'''
+
+        q = floor((self.capital * 0.01) / stop_loss)
+        # print("LoT SIZE",direction,q,self.capital)
+        if direction == 'BUY':
+            if self.capital < (entry_price * q):
+                return None
+            else:
+                return q
+        if direction == 'SELL':
+            if self.capital < (margin * q):
+                return None
+            else:
+                return q
+
+    def Margin(self,symbol):
+        '''For Short Orders'''
+        return 289
+
+
+    def Portfolio_value(self,fill):
+        if fill.direction == "BUY" and fill.signal_type == "OPEN":
+            self.capital = self.initial_capital - (fill.quantity * fill.price)
+            self.initial_capital = self.capital
+        if fill.direction == "BUY" and fill.signal_type == "CLOSE":
+            self.capital = self.capital + (fill.quantity * fill.price) - fill.commission
+            self.initial_capital = self.capital
+
+        if fill.direction == "SELL" and fill.signal_type == "OPEN":
+            margin = self.Margin(fill.symbol) * fill.quantity
+            self.capital = self.initial_capital - margin
+            self.initial_capital = self.capital
+
+        if fill.direction == 'SELL' and fill.signal_type == "CLOSE":
+            margin = self.Margin(fill.symbol) * fill.quantity
+            entry_price = self.order_book.loc[fill.order_id].entry_price
+            price_diff = fill.quantity * (entry_price - fill.price)
+            self.capital = self.initial_capital + margin + price_diff - fill.commission
+            self.initial_capital = self.capital
+
+
+    def last_candle(self):
+        self.last_candle = {}
+        for i in self.symbol_list:
+            self.last_candle[i] = self.data.all_data[i].iloc[-1].name.time()
+
+    def order_book_signal(self,signal):
+
+        # If signal is OPEN and Signal not in the end of the day
+        if (signal.signal_type == 'OPEN') and (signal.Datetime.time() <= self.last_candle[signal.symbol]) and (signal.order_id not in self.signal_book.index):
+
+            ### order_book the signal in signal_book
+            row = {'signal_type':signal.direction,'entry_price':signal.entry_price,
+                  'entry_date':signal.Datetime,'stop_loss':signal.stop_loss,'symbol':signal.symbol}
+            self.signal_book = self.signal_book.append(pd.Series(row,name = signal.order_id))
+
+            ### Send order to Broker
+            margin = self.Margin(signal.symbol)
+            quantity = self.Lot_Size(signal.symbol,signal.stop_loss,signal.entry_price,margin,signal.direction)
+            if quantity is not None:
+                order = OrderEvent(signal.order_id,signal.symbol,'MARKET',quantity,signal.direction,signal.entry_price) #price = data.latest_price[symbol] not the price from signal
+                self.events.put(order)
+            else:
+                pass
+
+
+        if (signal.signal_type == 'CLOSE') & (signal.parent_id in self.order_book.index):
+
+            ### If Position closed within a day(naturally)
+            if self.order_book.loc[signal.parent_id].exit_date != self.order_book.loc[signal.parent_id].exit_date: #exit date is null
+                quantity = self.order_book.loc[signal.parent_id].quantity
+                direction = self.order_book.loc[signal.parent_id].direction
+                order = OrderEvent(signal.parent_id,signal.symbol,'MARKET',quantity,direction,signal.exit_price)
+                self.events.put(order)
+
+            ### When already it is closed
+            else: #order_book signal in close
+                self.signal_book.loc[signal.parent_id,'exit_price'] = signal.exit_price
+                self.signal_book.loc[signal.parent_id,'exit_date'] = signal.Datetime
+
+
+    def close_orders(self): #when current_time == last_candle of the day
+        for symbol in self.symbol_list:
+            if self.data.get_latest_bar_datetime(symbol).time() == self.last_candle[symbol]:
+                for i in self.order_book.query('exit_date != exit_date & direction == "SELL"').iterrows():
+                    price = self.data.get_latest_bar_value(symbol,'Close')
+                    order = OrderEvent(i[0],i[1].symbol,'MARKET',i[1].quantity,i[1].direction,price)
+                    self.events.put(order)
+                    self.order_book.loc[i[0],'exit_date'] = self.data.get_latest_bar_datetime(symbol)
+                    self.order_book.loc[i[0],'exit_price'] = price
+
+
+    def order_book_fill(self,fill):
+        if fill.signal_type == "CLOSE":
+            self.order_book.loc[fill.order_id,'commission'] = fill.commission
+            self.order_book.loc[fill.order_id,'exit_date'] = self.data.get_latest_bar_datetime(fill.symbol)
+            self.order_book.loc[fill.order_id,'exit_price']  = fill.price
+            if self.signal_book.loc[fill.order_id,'signal_type'] == 'BUY':
+                self.order_book.loc[fill.order_id,'profit'] = (self.order_book.loc[fill.order_id].quantity)*(self.order_book.loc[fill.order_id].exit_price - self.order_book.loc[fill.order_id].entry_price)
+            if self.signal_book.loc[fill.order_id,'signal_type'] == 'SELL':
+                self.order_book.loc[fill.order_id,'profit'] = (self.order_book.loc[fill.order_id].quantity)* (self.order_book.loc[fill.order_id].entry_price - self.order_book.loc[fill.order_id].exit_price)
+
+        if fill.signal_type == "OPEN":
+            self.order_book.loc[fill.order_id,'entry_date'] = self.data.get_latest_bar_datetime(fill.symbol)
+            self.order_book.loc[fill.order_id,'entry_price'] = fill.price
+            self.order_book.loc[fill.order_id,'direction'] = fill.direction
+            self.order_book.loc[fill.order_id,'symbol'] = fill.symbol
+            self.order_book.loc[fill.order_id,'quantity'] = fill.quantity
+            self.order_book.loc[fill.order_id,'commission'] = None
+            self.order_book.loc[fill.order_id,'stop_loss'] = self.signal_book.loc[fill.order_id,'stop_loss']
+
+    def find_legs(self,signal):
+
+        if signal.order_type == "Primary":
+            #After finding "n"
+            self.legs = 1#'no. of legs'
+            #Send the first signal
+            ## finding the quantity first
+            # print(signal.direction)
+            if signal.direction == 'BUY':
+                margin = 0
+            if signal.direction == 'SELL':
+                margin = self.Margin(signal.symbol)
+            quantity = self.Lot_Size(signal.symbol,signal.stop_loss,signal.entry_price,margin,signal.direction)
+            # print(signal.symbol,signal.stop_loss,signal.entry_price,margin,signal.direction,sep = '.......')
+            # print('qunatity:',quantity)
+            ## place order!
+            if quantity is not None:
+                self.total_quantity[signal.parent_id] = {'Total':quantity,'Remaining':quantity}
+                order = OrderEvent(order_id = signal.order_id,symbol = signal.symbol,order_type = 'MARKET',
+                                   quantity = quantity,direction = signal.direction,price = signal.entry_price,
+                                  parent_id = signal.parent_id) #price = data.latest_price[symbol] not the price from signal
+                #self.events.put(order)
+
+
+                #Update SignalBook
+                row = {'signal_type':signal.direction,'entry_price':signal.entry_price,
+                  'entry_date':signal.Datetime,'stop_loss':signal.stop_loss,'symbol':signal.symbol,'order_id':signal.order_id}
+                self.signal_book = self.signal_book.append(pd.Series(row,name = signal.parent_id))
+
+                #Update OrderBook
+                self.order_book.loc[signal.order_id,'entry_date'] = signal.Datetime
+                self.order_book.loc[signal.order_id,'entry_price'] = signal.entry_price
+                self.order_book.loc[signal.order_id,'direction'] = signal.direction
+                self.order_book.loc[signal.order_id,'symbol'] = signal.symbol
+                self.order_book.loc[signal.order_id,'quantity'] = quantity
+                self.order_book.loc[signal.order_id,'commission'] = None
+                self.order_book.loc[signal.order_id,'stop_loss'] = signal.stop_loss
+
+                return order
+
+            else:
+                pass
+
+        if signal.order_type == 'add_on':
+            if self.quantity is not None:
+                order = OrderEvent(order_id = signal.order_id,symbol = signal.symbol,order_type = 'MARKET',
+                               quantity = quantity,direction = signal.direction,price = signal.entry_price,
+                              parent_id = signal.parent_id) #price = data.latest_price[symbol] not the price from signal
+                return order
+                #self.events.put(order)
+            else:
+                pass
+
+        if signal.order_type == 'Partial-Exit':
+            try:
+                quantity = floor(self.total_quantity[signal.parent_id]['Remaining']/2)
+            except KeyError:
+                quantity = None
+            if quantity is not None:
+                order = OrderEvent(order_id = signal.order_id,symbol = signal.symbol,order_type = 'MARKET',
+                                   quantity = quantity,direction = signal.direction,price = signal.exit_price,
+                                  parent_id = signal.parent_id) #price = data.latest_price[symbol] not the price from signal
+
+                self.total_quantity[signal.parent_id]['Remaining'] = self.total_quantity[signal.parent_id]['Remaining'] - quantity
+
+
+                candle = self.signal_book.loc[signal.parent_id]
+
+                #Finding Profit
+                if candle.signal_type == 'BUY':
+                    profit= order.quantity*(signal.exit_price - candle.entry_price)
+                if  candle.signal_type == 'SELL':
+                    profit = order.quantity* ( candle.entry_price - signal.exit_price)
+
+                row = {'entry_date':candle.entry_date,"entry_price":candle.entry_price,
+                       'exit_price':signal.exit_price,'exit_date':signal.Datetime,'stop_loss':candle.stop_loss,
+                       'symbol':signal.symbol,'quantity':order.quantity,'profit':profit,'direction':candle.signal_type}
+                self.order_book = self.order_book.append(pd.Series(row,name = signal.order_id))
+                return order
+                #self.events.put(order)
+
+
+
+
+
+            else:
+                pass
+
+        if signal.order_type == 'Exit' and signal.order_id not in self.order_book.index:
+            try:
+                quantity = self.total_quantity[signal.parent_id]['Remaining']
+            except KeyError:
+                quantity = None
+            if quantity is not None:
+                order_id = self.signal_book.loc[signal.parent_id].order_id
+                order = OrderEvent(order_id = order_id,symbol = signal.symbol,order_type = 'MARKET',
+                                   quantity = quantity,direction = signal.direction,price = signal.exit_price,
+                                  parent_id = signal.parent_id) #price = data.latest_price[symbol] not the price from signal
+                self.events.put(order)
+                self.total_quantity[signal.parent_id]
+
+                #Update OrderBook
+                candle = self.signal_book.loc[signal.parent_id]
+
+                #Finding Profit
+                if candle.signal_type == 'BUY':
+                    profit= order.quantity*(signal.exit_price - candle.entry_price)
+                if  candle.signal_type == 'SELL':
+                    profit = order.quantity* ( candle.entry_price - signal.exit_price)
+
+
+                self.order_book.loc[order_id,'exit_date'] = signal.Datetime
+                self.order_book.loc[order_id,'exit_price'] = signal.exit_price
+                self.order_book.loc[order_id,'quantity'] = order.quantity
+                self.order_book.loc[order_id,'profit'] = profit
+
+
+#                 row = {'entry_date':candle.entry_date,"entry_price":candle.entry_price,'direction':candle.signal_type,
+#                        'exit_price':signal.exit_price,'exit_date':signal.Datetime,'stop_loss':candle.stop_loss,
+#                        'symbol':signal.symbol,'quantity':order.quantity,'profit':profit}
+#                 self.order_book = self.order_book.append(pd.Series(row,name = signal.order_id),sort=True)
+
+                return order
+            else:
+                pass
+
+
+    def update_signal(self,signal):
+        self.order_book_signal(signal)
+
+    def update_suggested_order(self,suggested_order):
+        self.find_legs(suggested_order)
+
+    def update_fill(self,fill):
+        #self.order_book_fill(fill)
+        self.Portfolio_value(fill)
+
+    def update_timeindex(self):
+        #self.close_orders()
+        pass
+
+############################################# MULTIPLE LEG BACKTEST ###############################
+
+from Perf.Performance import Performance
+from queue import Queue
+import pytz
+from copy import deepcopy
+import matplotlib.pyplot as plt
+from math import floor,ceil
+
+class Backtest():
+    def __init__(self, symbol_list, timeframe,data_handler,
+                 execution_handler, portfolio, strategy,indicator,Perf):
+
+        self.symbol_list = symbol_list
+        self.timeframe = timeframe
+        self.performance = Perf
+        self.data_handler_cls = data_handler
+        self.execution_handler_cls = execution_handler
+        self.portfolio_cls = portfolio
+        self.strategy_cls = strategy
+        self.indicator_cls = indicator
+        self.events = Queue()
+        self.equity = {}
+        self._generate_trading_instances()
+
+
+    def _generate_trading_instances(self):
+
+        print("LOading Data...",)
+        self.data_handler = self.data_handler_cls(self.events,self.symbol_list,self.timeframe)
+        self.strategy = self.strategy_cls(self.events,self.data_handler,self.indicator_cls)
+        self.portfolio = self.portfolio_cls(self.data_handler, self.events)
+        self.execution_handler = self.execution_handler_cls(self.events)
+
+
+    def _run_backtest(self,n):
+        for i in tqdm(range(n)):
+            # print('-'*30)
+            self.data_handler.update_bars()
+            self.equity[self.data_handler.get_latest_bar_datetime(self.symbol_list[0])] = self.portfolio.capital
+            if self.data_handler.continue_backtest == False:
+                break
+            while True:
+                try:
+                    event = self.events.get(False)
+                except:
+                    break
+                # print(self.portfolio.capital)
+                if event is not None:
+                    if event.type == 'MARKET':
+                        if len(self.data_handler.latest_symbol_data[self.symbol_list[0]]) < 50 :
+                            continue
+                        else:
+                            self.strategy.calculate_signal()
+                            self.portfolio.update_timeindex()
+                            continue
+                    elif event.type == 'SIGNAL':
+                        # print('SIGNAL',event.order_id,event.parent_id,event.direction,event.signal_type,event.stop_loss,sep='|')
+                        order = self.portfolio.update_signal(event)
+                        continue
+                    elif event.type == 'SuggestedOrder' and isinstance(event,SuggestedOrder):
+                        # print('SIGNAL',event.order_id,event.parent_id,event.order_type,event.direction,event.signal_type,sep='|')
+                        # print('SIGNAL_OB:',event.parent_id,event.stop_loss)
+                        order  = self.portfolio.find_legs(event)
+                                                                                                #continue
+                                                                                                #elif event.type == 'ORDER':
+                        if order is not None and isinstance(order,OrderEvent) :
+                            #print('ORDER',order.order_id,order.quantity,order.direction,sep='|')
+                            fill = self.execution_handler.execute_order(order)
+                                                                                                    #continue
+                                                                                                #elif event.type == 'FILL':
+                            if fill is not None and isinstance(fill,FillEvent):
+                                # print('FILL',fill.order_id,fill.direction,fill.commission,fill.timeindex,sep='|')
+                                self.portfolio.update_fill(fill)
+                                continue
+
+                # print(self.portfolio.capital,self.strategy.order_block)
+
+        self.equity = pd.Series(self.equity)
+        self.portfolio.order_book.commission = 0
+
+    def output_performance(self,name):
+        self.stat = self.performance(self)
+        self.stat.make_stats()
+        self.stat.print_stats()
+        self.stat.make_pdf(name)
+        self.stat.make_equity_curve()
+
+
+    def simulate_trading(self,n,name):
+
+        self._run_backtest(n)
+        self.output_performance(name)
+
+
+########################################################## ORDERBLOCK with correct entry ###########################################################
+
+class Strategy_OrderBlock_correct():
+    def __init__(self,events,data,indicator):
+        self.events = events
+        self.data = data
+        self.symbol_list = data.symbol_list
+        self.indicator = indicator(self.events,self.data)
+        self.ob = {}
+        self.activate_floor = {}
+        self.register = pd.DataFrame(columns=['order_block','Type','entry_date','entry_price','exit_date',
+                                              'exit_price','stop_loss_price','take_profit_price']).set_index('order_block')
+        self.keys_to_remove = []
+        self.order_block = None
+
+    def close_all_orders(self,direction):
+        directn = 'Red' if direction == "BUY" else 'Green'
+        for i in self.register.query('exit_date != exit_date & Type == @directn').iterrows():
+            exit_date = self.data.get_latest_bar_datetime(i[1].symbol)
+            exit_price = self.data.get_latest_bar_value(i[1].symbol,'Close')
+            self.register.loc[i[0],'exit_price'] = exit_price
+            self.register.loc[i[0],'exit_date'] = exit_date
+            signal =  SignalEvent(order_type='MARKET',strategy_id=1,symbol=i[1].symbol,Datetime=exit_date,
+                                     signal_type='CLOSE',direction = direction,parent_id=i[1].parent_id,exit_price=exit_price)
+            self.events.put(signal)
+
+
+    def find_OB(self,symbol):
+        results = self.indicator.find_ob()
+        if results == False:
+            pass
+        else:
+            self.order_block = [i for i in results if i is not None][0]
+            flag = self.data.latest_symbol_data[symbol].loc[self.order_block].Open - self.data.latest_symbol_data[symbol].loc[self.order_block].Close
+            if flag > 0:
+                self.ob[self.order_block] = {'Type':'Red','Price':self.data.latest_symbol_data[symbol].loc[self.order_block].High}
+            else :
+                self.ob[self.order_block] = {'Type':'Green','Price':self.data.latest_symbol_data[symbol].loc[self.order_block].Low}
+
+    def find_entry(self,symbol):
+        conversion = {'Open':'first','High':"max",'Low':"min",'Close':'last','Volume':"sum"}
+        Df = self.data.all_data[symbol].resample('180min').apply(conversion).dropna().Close
+
+        entry_date = self.data.get_latest_bar_datetime(symbol)
+        idx = ema(Df,18).index
+        self.slow_ma = ema(Df,18).loc[idx[idx < entry_date][-1]]
+        idx = ema(Df,9).index
+        self.fast_ma = ema(Df,9).loc[idx[idx < entry_date][-1]]
+
+        self.tr = true_range(self.data.latest_symbol_data[symbol]).iloc[-2]
+        self.atr_candle = atr(self.data.latest_symbol_data[symbol],20).iloc[-2]
+        self.volatility = self.tr/self.atr_candle
+        [self.ob.pop(self.keys_to_remove.pop()) for i in range(len(self.keys_to_remove))]
+        for i in self.ob.keys():
+            if (self.volatility > 2) or (abs(self.data.latest_symbol_data[symbol].loc[i].Open -self.data.latest_symbol_data[symbol].loc[i].Close)/(self.data.latest_symbol_data[symbol].loc[i].High - self.data.latest_symbol_data[symbol].loc[i].Low)) < 0.5:
+                entry_price = (self.data.latest_symbol_data[symbol].loc[i].High + self.data.latest_symbol_data[symbol].loc[i].Low)/2
+                if Cuts(self.data.latest_symbol_data[symbol],self.data.get_latest_bar_datetime(symbol),entry_price):
+                    if self.ob[i]['Type'] == 'Red':
+                        if self.fast_ma < self.slow_ma:
+                            self.keys_to_remove.append(i)
+                            continue
+                        direction = -1
+                    if self.ob[i]['Type'] == "Green":
+                        if self.fast_ma > self.slow_ma:
+                            self.keys_to_remove.append(i)
+                            continue
+                        direction = 1
+                    #print('Price',i,self.ob[i]['Price'],sep='|')
+                    directn = 'BUY' if self.ob[i]['Type'] == "Red" else 'SELL'
+                    self.close_all_orders(directn)
+                    self.activate_floor[i]  = False
+                    signal = SignalEvent(strategy_id = 1,symbol = symbol,Datetime = entry_date,
+                                           signal_type = "OPEN",entry_price = entry_price,direction = directn,
+                                            stop_loss = self.atr_candle * 3.5,order_type = 'MARKET')
+                    self.events.put(signal)
+                    self.register.loc[i,'symbol'] = symbol
+                    self.register.loc[i,'entry_price'] = entry_price
+                    self.register.loc[i,'entry_date'] = entry_date
+                    self.register.loc[i,'Type'] = self.ob[i]['Type']
+                    stop_loss_price = entry_price + (direction * self.atr_candle * 3.5)
+                    self.register.loc[i,'stop_loss_price'] = stop_loss_price
+                    self.register.loc[i,'parent_id'] = signal.order_id
+
+                if self.ob[i]['Type'] == "Green" and Bear_Gap(self.data.latest_symbol_data[symbol]):
+                    if self.data.latest_symbol_data[symbol].loc[i].Low > self.data.latest_symbol_data[symbol].iloc[-1].Open:
+                        self.keys_to_remove.append(i)
+                        continue
+                if self.ob[i]['Type'] == "Red" and Bull_Gap(self.data.latest_symbol_data[symbol]):
+                    if self.data.latest_symbol_data[symbol].loc[i].High < self.data.latest_symbol_data[symbol].iloc[-1].Open:
+                        self.keys_to_remove.append(i)
+                        continue
+
+            else:
+                entry_price = self.ob[i]['Price']
+                if Cuts(self.data.latest_symbol_data[symbol],self.data.get_latest_bar_datetime(symbol),entry_price):
+                    #print('Price',i,self.ob[i]['Price'],sep='|')
+                    if self.ob[i]['Type'] == 'Red':
+                        if self.fast_ma < self.slow_ma:
+                            self.keys_to_remove.append(i)
+                            continue
+                        direction = -1
+                    if self.ob[i]['Type'] == "Green":
+                        if self.fast_ma > np.mean(self.slow_ma):
+                            self.keys_to_remove.append(i)
+                            continue
+                        direction = 1
+
+                    directn = 'BUY' if self.ob[i]['Type'] == "Red" else 'SELL'
+                    self.close_all_orders(directn)
+                    self.activate_floor[i]  = False
+                    signal = SignalEvent(strategy_id = 1,symbol = symbol,Datetime = entry_date,
+                                           signal_type = "OPEN",entry_price = entry_price,direction = directn,
+                                            stop_loss = self.atr_candle * 3.5,order_type = 'MARKET')
+                    self.events.put(signal)
+                    self.register.loc[i,'symbol'] = symbol
+                    self.register.loc[i,'entry_price'] = entry_price
+                    self.register.loc[i,'entry_date'] = self.data.get_latest_bar_datetime(symbol)
+                    self.register.loc[i,'Type'] = self.ob[i]['Type']
+                    stop_loss_price = entry_price + (direction * self.atr_candle * 3.5)
+                    self.register.loc[i,'stop_loss_price'] = stop_loss_price
+                    self.register.loc[i,'parent_id'] = signal.order_id
+
+                else:
+                    continue
+    def remove_keys(self):
+        a = set(self.register.index)
+        b = set(self.ob.keys())
+        for i in a.intersection(b):
+            self.ob.pop(i)
+
+
+    def find_exit(self,symbol,x = 40,y = 2):
+        current_price = self.data.get_latest_bar_value(symbol,'Close')
+        today_date = self.data.get_latest_bar_datetime(symbol)
+        today_high = self.data.get_latest_bar_value(symbol,'High')
+        today_low =  self.data.get_latest_bar_value(symbol,'Low')
+        yesterday_low = self.data.get_latest_bars_values(symbol,'Low',2).iloc[0]
+        yesterday_high = self.data.get_latest_bars_values(symbol,'High',2).iloc[0]
+        atr_mean = atr(self.data.latest_symbol_data[symbol],14).rolling(25).mean()[-2]
+        Floor = atr_mean * y
+        for i in self.register.query('exit_date != exit_date').iterrows():
+            entry_price = i[1].entry_price
+            entry_date = i[1].entry_date
+            direction = i[1].Type
+
+            ######## STOP LOSS ######################
+            if Cuts(self.data.latest_symbol_data[symbol],self.data.get_latest_bar_datetime(symbol),i[1].stop_loss_price):
+                exit_date = self.data.get_latest_bar_datetime(symbol)
+                exit_price = i[1].stop_loss_price
+                self.register.loc[i[0],'exit_date'] = exit_date
+                self.register.loc[i[0],'exit_price'] = exit_price
+                directn = 'BUY' if i[1].Type == "Red" else 'SELL'
+                signal =  SignalEvent(order_type='MARKET',strategy_id=1,symbol=symbol,Datetime=exit_date,
+                                         signal_type='CLOSE',direction = directn,parent_id=i[1].parent_id,exit_price=exit_price)
+                self.events.put(signal)
+                continue
+
+            if direction == "Green" and Bull_Gap(self.data.latest_symbol_data[symbol]):
+                if self.data.latest_symbol_data[symbol].iloc[-1].Open > i[1].stop_loss_price:
+                    exit_price = self.data.latest_symbol_data[symbol].iloc[-1].Open
+                    self.register.loc[i[0],'exit_date'] = exit_date
+                    self.register.loc[i[0],'exit_price'] = today_date
+                    signal =  SignalEvent(order_type='MARKET',strategy_id=1,symbol=symbol,Datetime=today_date,
+                                             signal_type='CLOSE',direction = 'BUY',parent_id=i[1].parent_id,exit_price=exit_price)
+                    self.events.put(signal)
+                    continue
+
+            if direction == "Red" and Bear_Gap(self.data.latest_symbol_data[symbol]):
+                if self.data.latest_symbol_data[symbol].iloc[-1].Open < i[1].stop_loss_price:
+                    exit_price = self.data.latest_symbol_data[symbol].iloc[-1].Open
+                    self.register.loc[i[0],'exit_date'] = exit_date
+                    self.register.loc[i[0],'exit_price'] = today_date
+                    signal =  SignalEvent(order_type='MARKET',strategy_id=1,symbol=symbol,Datetime=today_date,
+                                             signal_type='CLOSE',direction = 'SELL',parent_id=i[1].parent_id,exit_price=exit_price)
+                    self.events.put(signal)
+                    continue
+
+
+
+
+            ######## NOT HITTING STOP LOSS & FLOOR ######################
+            candles_since_entry = self.data.get_latest_bar_index(symbol) - self.data.latest_symbol_data[symbol].index.get_loc(entry_date)
+            if candles_since_entry == x:
+                if direction == 'Red' and current_price < entry_price:
+                    exit_date = self.data.get_latest_bar_datetime(symbol)
+                    exit_price = current_price
+                    self.register.loc[i[0],'exit_date'] = exit_date
+                    self.register.loc[i[0],'exit_price'] = exit_price
+                    signal =  SignalEvent(order_type='MARKET',strategy_id=1,symbol=symbol,Datetime=exit_date,
+                                         signal_type='CLOSE',direction = 'BUY',parent_id=i[1].parent_id,exit_price=exit_price)
+                    self.events.put(signal)
+                if direction == 'Green' and current_price > entry_price:
+                    exit_date = self.data.get_latest_bar_datetime(symbol)
+                    exit_price = current_price
+                    self.register.loc[i[0],'exit_date'] = exit_date
+                    self.register.loc[i[0],'exit_price'] = exit_price
+                    signal =  SignalEvent(order_type='MARKET',strategy_id=1,symbol=symbol,Datetime=exit_date,
+                                         signal_type='CLOSE',direction = 'SELL',parent_id=i[1].parent_id,exit_price=exit_price)
+                    self.events.put(signal)
+
+            ######## PARTIAL EXIT ######################
+
+            if direction == 'Red' and today_high >=entry_price + Floor and self.activate_floor[i[0]]  == False:
+                self.activate_floor[i[0]]  = True
+            if direction == 'Green' and today_low <= entry_price - Floor and self.activate_floor[i[0]]  == False:
+                self.activate_floor[i[0]]  = True
+
+
+
+            if self.activate_floor[i[0]]  == True:
+                df = self.data.latest_symbol_data[symbol]
+                PSAR = psar(df)
+                if direction == "Red" and PSAR['psarbull'][-2] is not None:
+                    # print('For order BUY:',today_date,current_price,entry_price + Floor,sep = ' || ')
+                    # print('Psar for BUY: ',PSAR['psarbull'][-2],PSAR['psarbull'][-1],PSAR['psarbull'][-3])
+                    if Cuts(df,today_date,PSAR['psarbull'][-2]):
+                        exit_date = self.data.get_latest_bar_datetime(symbol)
+                        exit_price = PSAR['psarbull'][-2]
+                        self.register.loc[i[0],'exit_price'] = psar(df)['psarbull'][-2]
+                        self.register.loc[i[0],'exit_date'] = exit_date
+                        signal =  SignalEvent(order_type='MARKET',strategy_id=1,symbol=symbol,Datetime=exit_date,
+                                                 signal_type='CLOSE',direction = 'BUY',parent_id=i[1].parent_id,exit_price=exit_price)
+                        self.events.put(signal)
+                    if Bear_Gap(self.data.latest_symbol_data[symbol]) and self.data.get_latest_bar_value(symbol,'Open') < PSAR['psarbull'][-2]:
+                        exit_date = self.data.get_latest_bar_datetime(symbol)
+                        exit_price = self.data.get_latest_bar_value(symbol,'Open')
+                        self.register.loc[i[0],'exit_price'] = psar(df)['psarbull'][-2]
+                        self.register.loc[i[0],'exit_date'] = exit_date
+                        signal =  SignalEvent(order_type='MARKET',strategy_id=1,symbol=symbol,Datetime=exit_date,
+                                                 signal_type='CLOSE',direction = 'BUY',parent_id=i[1].parent_id,exit_price=exit_price)
+                        self.events.put(signal)
+
+
+                if direction == "Green" and PSAR['psarbear'][-2] is not None:
+                    # print('For order SELL:',today_date,current_price,entry_price - Floor,sep = ' || ')
+                    # print('Psar for SELL: ',PSAR['psarbear'][-2],PSAR['psarbear'][-1],PSAR['psarbear'][-3])
+                    if Cuts(df,today_date,PSAR['psarbear'][-2]):
+                        exit_date = self.data.get_latest_bar_datetime(symbol)
+                        exit_price = PSAR['psarbear'][-2]
+                        self.register.loc[i[0],'exit_price'] = exit_price
+                        self.register.loc[i[0],'exit_date'] = exit_date
+                        signal =  SignalEvent(order_type='MARKET',strategy_id=1,symbol=symbol,Datetime=exit_date,
+                                                 signal_type='CLOSE',direction = 'SELL',parent_id=i[1].parent_id,exit_price=exit_price)
+                        self.events.put(signal)
+                        # print(exit_date,psar(df)['psarbear'][-2])
+                    if Bull_Gap(self.data.latest_symbol_data[symbol]) and self.data.get_latest_bar_value(symbol,'Open') > PSAR['psarbear'][-2]:
+                        exit_date = self.data.get_latest_bar_datetime(symbol)
+                        exit_price = self.data.get_latest_bar_value(symbol,'Open')
+                        self.register.loc[i[0],'exit_price'] = exit_price
+                        self.register.loc[i[0],'exit_date'] = exit_date
+                        signal =  SignalEvent(order_type='MARKET',strategy_id=1,symbol=symbol,Datetime=exit_date,
+                                                 signal_type='CLOSE',direction = 'SELL',parent_id=i[1].parent_id,exit_price=exit_price)
+                        self.events.put(signal)
+
+    def calculate_signal(self):
+        for symbol in self.symbol_list:
+            if self.order_block is not None:
+                self.find_entry(symbol)
+                self.remove_keys()
+                self.find_exit(symbol)
+            self.find_OB(symbol)
+
+
+
+
 create elliot wave s/r functionb from csv file
 
