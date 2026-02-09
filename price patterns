@@ -378,6 +378,35 @@ def spike(DF, n, k):
 
     return (H1 - HH > 2 * avg_atr_value) and (H1 - H > k * avg_atr_value)
 
+
+def spike_high(DF, n, k):
+    """
+    SPIKE=high[1]-highest(high,n)
+          [2]>2*average(true range,n)[2] and
+          high[1]-high>k*average(true range,n)[2]
+    k= 0.75 to 2
+    """
+    H1 = DF["High"][-2]
+    HH = DF["High"].rolling(n).max()[-3]
+    H = DF["High"][-1]
+    avg_atr_value = atr(DF, n)[-3]
+
+    return (H1 - HH > 1 * avg_atr_value) and (H1 - H > k * avg_atr_value)
+
+def spike_low(DF, n, k):
+    """
+    SPIKE=high[1]-highest(high,n)
+          [2]>2*average(true range,n)[2] and
+          high[1]-high>k*average(true range,n)[2]
+    k= 0.75 to 2
+    """
+    L1 = DF["Low"][-2]
+    LL = DF["Low"].rolling(n).min()[-3]
+    L = DF["Low"][-1]
+    avg_atr_value = atr(DF, n)[-3]
+
+    return (LL - L1 > 1 * avg_atr_value) and (L - L1 > k * avg_atr_value)
+
 # <--------------------- BULLISH PATTERNS -------------------------->
 
 
