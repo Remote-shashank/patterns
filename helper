@@ -1,0 +1,59 @@
+def atr(df, period):
+
+    """
+    function to calculate Average True Range
+    Args:
+        df (pd.DataFrame): Data Symbol
+        period:14(mostly)
+    Returns:
+        pd.Series
+    """
+
+    df = df.copy()
+    df["H-L"] = abs(df["High"] - df["Low"])
+    df["H-PC"] = abs(df["High"] - df["Close"].shift(1))
+    df["L-PC"] = abs(df["Low"] - df["Close"].shift(1))
+    df["TR"] = df[["H-L", "H-PC", "L-PC"]].max(axis=1, skipna=False)
+    # df['ATR'] = df['TR'].ewm(com=n,min_periods=n).mean()
+    df["ATR"] = df["TR"].rolling(period).mean()
+    return df["ATR"]
+
+
+def true_range(df):
+
+    """
+    function to calculate True Range
+    Args:
+        df (pd.DataFrame): Data Symbol
+
+    Returns:
+        pd.Series
+    """
+    df = df.copy()
+    df["H-L"] = abs(df["High"] - df["Low"])
+    df["H-PC"] = abs(df["High"] - df["Close"].shift(1))
+    df["L-PC"] = abs(df["Low"] - df["Close"].shift(1))
+    df["TR"] = df[["H-L", "H-PC", "L-PC"]].max(axis=1, skipna=False)
+    return df["TR"]
+
+
+def cuts(df, x, price):
+    """Tells whether a candle cuts a price or Not
+    (dataframe, point in index(date), price)
+    returns Bool"""
+    if (df.loc[x, "High"] > price) and (df.loc[x, "Low"] < price):
+        return True
+    elif (
+        bear_gap(df.loc[:x])
+        and (price < df.loc[:x, "Low"].iloc[-2])
+        and (price > df.loc[:x, "High"].iloc[-1])
+    ):
+        return True
+    elif (
+        bull_gap(df.loc[:x])
+        and (price > df.loc[:x, "High"].iloc[-2])
+        and (price < df.loc[:x, "Low"].iloc[-1])
+    ):
+        return True
+    else:
+        return False
