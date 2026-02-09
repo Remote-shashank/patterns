@@ -1,0 +1,49 @@
+def stochastic_volume_condition_opposite(df):
+
+    val = df.STOCHASTIC_VOLUME.iloc[-1]
+    if val > 70:
+        return "Bearish"
+    if val < 30:
+        return "Bullish"
+
+
+def stochastic_volume_condition(df):
+    val = df.STOCHASTIC_VOLUME.iloc[-1]
+    if val < 30:
+        return "Bearish"
+    if val > 70:
+        return "Bullish"
+
+
+def volume_oscillator_condition_opposite(df):
+    val = df.VOLUME_OSCILLATOR.iloc[-1]
+    if val > 70:
+        return "Bearish"
+    if val < 30:
+        return "Bullish"
+
+
+def volume_oscillator_condition(df):
+    val = df.VOLUME_OSCILLATOR.iloc[-1]
+    if val < 30:
+        return "Bearish"
+    if val > 70:
+        return "Bullish"
+
+
+def obv_condition(df):
+    obv = df.OBV
+    ema_val = df.EMA
+    if obv[-1] > ema_val[-1] and obv[-2] < ema_val[-2]:
+        return "Bullish"
+    if obv[-1] < ema_val[-1] and obv[-2] > ema_val[-2]:
+        return "Bearish"
+
+
+def ad_condition(df):
+    ad = df.AD
+    ema_val = df.EMA
+    if ad[-1] > ema_val[-1] and ad[-2] < ema_val[-2]:
+        return "Bullish"
+    if ad[-1] < ema_val[-1] and ad[-2] > ema_val[-2]:
+        return "Bearish"
