@@ -1235,3 +1235,8 @@ def support_resistance_new_dbscan(df):
 #                     maxima.append(df.iloc[i].name)
 
 #     return maxima
+
+
+
+create elliot wave s/r functionb from csv file
+
