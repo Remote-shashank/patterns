@@ -1,15 +1,4 @@
-add divergence/hidden divergence of oscillating momentum indicators as momentum conditions
-
-
-
-def rsi_condition_opposite(df):
-
-    val = df.RSI[-1]
-
-    if val > 60:
-        return "Bearish"
-    elif val < 40:
-        return "Bullish"
+CARRY FORWARD = FALSE
 
 
 def rsi_condition(df):
@@ -19,29 +8,12 @@ def rsi_condition(df):
     if val < 40:
         return "Bearish"
 
-
-def mfi_condition_opposite(df):
-    val = df.MFI[-1]
-    if val > 60:
-        return "Bearish"
-    if val < 40:
-        return "Bullish"
-
-
 def mfi_condition(df):
     val = df.MFI[-1]
     if val > 60:
         return "Bullish"
     if val < 40:
         return "Bearish"
-
-
-def stochastic_condition_opposite(df):
-    val = df.STOCHASTIC[-1]
-    if val > 60:
-        return "Bearish"
-    if val < 40:
-        return "Bullish"
 
 
 def stochastic_condition(df):
@@ -52,28 +24,12 @@ def stochastic_condition(df):
         return "Bearish"
 
 
-def crsi_condition_opposite(df):
-    val = df.CRSI[-1]
-    if val > 60:
-        return "Bearish"
-    if val < 40:
-        return "Bullish"
-
-
 def crsi_condition(df):
     val = df.CRSI[-1]
     if val > 60:
         return "Bullish"
     if val < 40:
         return "Bearish"
-
-
-def william_percentage_condition_opposite(df):
-    val = df.WILLIAM_PERCENTAGE_R[-1]
-    if val > 60:
-        return "Bearish"
-    if val < 40:
-        return "Bullish"
 
 
 def william_percentage_condition(df):
@@ -84,14 +40,6 @@ def william_percentage_condition(df):
         return "Bearish"
 
 
-def uo_condition_opposite(df):
-    val = df.UO[-1]
-    if val > 60:
-        return "Bearish"
-    if val < 40:
-        return "Bullish"
-
-
 def uo_condition(df):
     val = df.UO[-1]
     if val > 60:
@@ -100,44 +48,11 @@ def uo_condition(df):
         return "Bearish"
 
 
-# Not to be Used(To be Merged)
-# def red_green_zone_condition1(df):
-#     # AO = Awesome_Oscillator(df)
-#     # AC = Acceleration_Oscillator(df)
-#     AO = df.AO
-#     AC = df.AC
-#     if AO[-1] > AO[-2] and AC[-1] > AC[-2] and df["Close"][-1] > df["Open"][-1]:
-#         return True
+
+CARRY FORWARD = TRUE
 
 
-# def red_green_zone_condition2(df):
-#     # AO = Awesome_Oscillator(df)
-#     # AC = Acceleration_Oscillator(df)
-#     AO = df.AO
-#     AC = df.AC
-#     if AO[-1] < AO[-2] and AC[-1] < AC[-2] and df["Close"][-1] < df["Open"][-1]:
-#         return True
-
-
-# def mom_bull(df):
-#     # MOM: If AC is above zero and also green then +X.
-#     #      If AC is below zero and also red then -X.
-#     # AC = Acceleration_Oscillator(df)
-#     AC = df.AC
-#     if AC[-1] > 0 and AC[-1] > AC[-2]:
-#         return True
-
-
-# def mom_bear(df):
-#     # MOM: If AC is above zero and also green then +X.
-#     #      If AC is below zero and also red then -X.
-#     # AC = Acceleration_Oscillator(df)
-#     AC = df.AC
-#     if AC[-1] < 0 and AC[-1] < AC[-2]:
-#         return True
-
-
-def red_green_zone_condition1(df):
+def red_green_zone_condition(df):
     # Green/Red Zone: If AO and AC both are green and candle is also green then +X
     #                 If AO and AC both are red and candle is also red then -X
     # AO = Awesome_Oscillator(df)
@@ -151,21 +66,7 @@ def red_green_zone_condition1(df):
         return "Bearish"
 
 
-def red_green_zone_condition2(df):
-    # Green/Red Zone: If AO and AC both are green and candle is also green then +X
-    #                 If AO and AC both are red and candle is also red then -X
-    # AO = Awesome_Oscillator(df)
-    # AC = Acceleration_Oscillator(df)
-    AO = df.AO
-    AC = df.AC
-    if AO[-1] > AO[-2] and AC[-1] > AC[-2] and df["Close"][-1] > df["Open"][-1]:
-        return "Bearish"
-
-    elif AO[-1] < AO[-2] and AC[-1] < AC[-2] and df["Close"][-1] < df["Open"][-1]:
-        return "Bullish"
-
-
-def mom1(df):
+def mom(df):
     # MOM: If AC is above zero and also green then +X.
     #      If AC is below zero and also red then -X.
     # AC = Acceleration_Oscillator(df)
@@ -177,19 +78,7 @@ def mom1(df):
         return "Bearish"
 
 
-def mom2(df):
-    # MOM: If AC is above zero and also green then +X.
-    #      If AC is below zero and also red then -X.
-    # AC = Acceleration_Oscillator(df)
-    AC = df.AC
-    if AC[-1] > 0 and AC[-1] > AC[-2]:
-        return "Bearish"
-
-    elif AC[-1] < 0 and AC[-1] < AC[-2]:
-        return "Bullish"
-
-
-def acceleration_oscillator_condition1(df):
+def acceleration_oscillator_condition(df):
     # AC = Acceleration_Oscillator(df)
     AC = df.AC
     # If above zero line a color change happens we need two consecutive green bars then +X
@@ -242,72 +131,23 @@ def acceleration_oscillator_condition1(df):
         return "Bearish"
 
 
-def acceleration_oscillator_condition2(df):
-    # AC = Acceleration_Oscillator(df)
-    AC = df.AC
-    # If above zero line a color change happens we need two consecutive green bars then +X
-    if AC[-2] > 0 and AC[-4] > AC[-3] and AC[-3] < AC[-2] and AC[-2] < AC[-1]:
-        return "Bearish"
-    # If below zero line a color change happens we need two consecutive red bars then -X
-    if AC[-2] < 0 and AC[-4] < AC[-3] and AC[-3] > AC[-2] and AC[-2] > AC[-1]:
-        return "Bullish"
-    # If below zero line a color change happens we need three consecutive green bars then +X
-    if (
-        AC[-3] < 0
-        and AC[-2] < 0
-        and AC[-1] < 0
-        and AC[-5] > AC[-4]
-        and AC[-4] < AC[-3]
-        and AC[-3] < AC[-2]
-        and AC[-2] < AC[-1]
-    ):
-        return "Bearish"
-    # If above zero line a color change happens we need three consecutive red bars then -X
-    if (
-        AC[-3] > 0
-        and AC[-2] > 0
-        and AC[-1] > 0
-        and AC[-5] < AC[-4]
-        and AC[-4] > AC[-3]
-        and AC[-3] > AC[-2]
-        and AC[-2] > AC[-1]
-    ):
-        return "Bullish"
-    # If a color change happens and after that a cross over from below zero line to above zero line then we need two consecutive green bars then +X on the score
-    if (
-        AC[-3] < 0
-        and AC[-2] > 0
-        and AC[-1] > 0
-        and AC[-4] > AC[-3]
-        and AC[-3] < AC[-2]
-        and AC[-2] < AC[-1]
-    ):
-        return "Bearish"
-    # If a color change happens and after that a cross over from above zero line to below zero line then we need two consecutive red bars then -X on the score
-    if (
-        AC[-3] > 0
-        and AC[-2] < 0
-        and AC[-1] < 0
-        and AC[-4] < AC[-3]
-        and AC[-3] > AC[-2]
-        and AC[-2] > AC[-1]
-    ):
-        return "Bullish"
-
-
-def ADX_EMA1(df):
-    adx_period = df.ADX
-    ema = df.EMA
-    if adx_period[-1] > ema[-1] and ema[-2] > adx_period[-2]:
-        return "Bearish"
-    if adx_period[-1] < ema[-1] and ema[-2] < adx_period[-2]:
-        return "Bullish"
-
-
-def ADX_EMA2(df):
+def ADX_EMA(df):
     adx_period = df.ADX
     ema = df.EMA
     if adx_period[-1] > ema[-1] and ema[-2] > adx_period[-2]:
         return "Bullish"
     if adx_period[-1] < ema[-1] and ema[-2] < adx_period[-2]:
         return "Bearish"
+
+
+divergence and hidden divergence for 
+TRIX 
+Stochastic
+RSI 
+CRSI (Connors RSI) 
+CCI (Commodity Channel Index) 
+Williams %R 
+Ultimate Oscillator 
+MFI (Money Flow Index) 
+Awesome Oscillator 
+Acceleration Oscillator 
