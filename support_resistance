@@ -1430,6 +1430,30 @@ def support_resistance_new_dbscan(df):
     return lines[lines.index >= 0].values
 
 
-
 create elliot wave s/r functionb from csv file
+
+Ichimoku 
+Tenkan-sen (conversion line) - dynamic support/resistance
+Kijun-sen (base line) - stronger support/resistance
+Senkou Span A & B (cloud boundaries) - major support/resistance zones
+The cloud itself acts as a support/resistance area
+
+PSAR (Parabolic SAR)
+psar_bull acts as support in uptrends
+psar_bear acts as resistance in downtrends
+
+Supertrend (Upper & Lower
+super_trend_upper acts as resistance
+super_trend_lower acts as support
+
+EMA (Exponential Moving Average) 
+
+SMA (Simple Moving Average) 
+
+HMA (Hull Moving Average) 
+
+WMA (Weighted Moving Average)
+
+Adaptive MA with Volatility 
+
 
