@@ -1,42 +1,7 @@
-def choppiness_index_above_50(df, period=14):
-    # choppiness_Index(df, period)
-    if df.CHOP > 50:
-        return True
-    else:
-        return False
-
-
-
-def trix_range(df, period=14):
-    trix = df.TRIX
-    std_dev = trix.std()
-    if trix[-1] > trix[-2] - std_dev and trix[-1] < trix[-2] + std_dev:
-        # It is likely in sideways
-        return True
-    else:
-        return False
-
-
-def bollinger_band_inside_keltner(df, period=20, coeff=2):
-    # 8.The Bollinger bands(20-day, 2 standard deviation) narrow so they are fully inside the Keltner Channel(20-day).
-    # m, u, l = Bolinger_Bands(df, period, coeff)
-    # mk, uk, lk = KeltnerChannel(df, period)
-    m, u, ll = df[["BB_M", "BB_U", "BB_L"]]
-    uk, lk = df[["KC_UL", "KC_LL"]]
-    if uk >= u and lk <= ll:
-        return True
-    else:
-        return False
-
-
-
 
 import numpy as np
-
-
 from scipy.signal import argrelextrema
 from Packages.indicators.trend_indicators import ema
-
 # from Packages.helper.helper import atr, true_range
 from Packages.indicators.momentum import stochastic
 
@@ -1450,6 +1415,139 @@ def upside_tasuki_gap(df):
     )
 
 
+def choppiness_index_above_50(df, period=14):
+    # choppiness_Index(df, period)
+    if df.CHOP > 50:
+        return True
+    else:
+        return False
+
+
+def trix_range(df, period=14):
+    trix = df.TRIX
+    std_dev = trix.std()
+    if trix[-1] > trix[-2] - std_dev and trix[-1] < trix[-2] + std_dev:
+        # It is likely in sideways
+        return True
+    else:
+        return False
+
+
+def bollinger_band_inside_keltner(df, period=20, coeff=2):
+    # 8.The Bollinger bands(20-day, 2 standard deviation) narrow so they are fully inside the Keltner Channel(20-day).
+    # m, u, l = Bolinger_Bands(df, period, coeff)
+    # mk, uk, lk = KeltnerChannel(df, period)
+    m, u, ll = df[["BB_M", "BB_U", "BB_L"]]
+    uk, lk = df[["KC_UL", "KC_LL"]]
+    if uk >= u and lk <= ll:
+        return True
+    else:
+        return False
+
+def atr_above_ema(df, period=14):
+    atr_period = df.ATR
+    ema = df.EMA_ATR
+    if atr_period[-1] > ema[-1]:
+        return True
+    else:
+        return False
+
+def close_and_closing_avg_condition(df, period):
+    # If the close is above the 25-day closing average
+    # Period can be 25 and 40
+    close = df["Close"][:-1]
+    closing_avg = close[-period:].mean()
+    if close[-2] > closing_avg:
+        return True
+
+    else:
+        return False
+
+ def ravi_above_cutoff_price_above_fractal(df, cutoff):
+     # RAVI is greater then A and price is above previous upward fractal then +X and if smaller then A then +0.
+     # RAVI is greater then A and price is below previous downward fractal then -X
+     # ravi = RAVI(df)
+     ravi = df.RAVI
+     upwardFractalIndex = find_maxima(df)
+     downwardFractalIndex = find_minima(df)
+
+     price = df["Close"][-1]
+
+     prevUpwardFractal = df.iloc[upwardFractalIndex[-1]].High
+     prevdownwardFractal = df.iloc[downwardFractalIndex[-1]].Low
+
+     if ravi > cutoff:
+         if price > prevUpwardFractal:
+             return True
+         if price < prevdownwardFractal:
+             return False
+
+
+ def fractal_breakout(df):
+     # Previous upward fractal breakout then +X, previous downward fractal breakout then -X (breakout means crossing over)
+     upwardFractalIndex = find_maxima(df)
+     downwardFractalIndex = find_minima(df)
+
+     prevUpwardFractal = df.iloc[upwardFractalIndex[-1]].High
+     prevdownwardFractal = df.iloc[downwardFractalIndex[-1]].Low
+
+     if prevUpwardFractal > df["High"][-2] and prevUpwardFractal < df["High"][-1]:
+         return True
+
+     if prevdownwardFractal < df["Low"][-2] and prevdownwardFractal > df["Low"][-1]:
+         return False
+
+
+
+def wide_ranging_day(df):
+    # A wide-ranging day is the day with higher volatility,higher volatility= (true range) >= 2*ATR
+    # ATR = atr(df, period)
+    # TR = true_range(df)
+    ATR = df.ATR
+    TR = df.TR
+    if (TR[-1] >= ATR[-1]) and 10 * np.abs(df["Open"][-1] - df["Close"][-1]) >= 5 * (
+        df["High"][-1] - df["Low"][-1]
+    ):
+        if df["Open"][-1] > df["Close"][-1]:
+            return "Bearish"
+        else:
+            return "Bullish"
+    else:
+        return False
+
+
+def outside_day(df):
+    second_last_high = df["High"][-2]
+    last_high = df["High"][-1]
+    second_last_low = df["Low"][-2]
+    last_low = df["Low"][-1]
+    if (second_last_high < last_high) and (second_last_low > last_low):
+        if (df["Close"][-1] < min(df["Close"][-2], df["Open"][-2])) or (
+            df["Close"][-1] > max(df["Close"][-2], df["Open"][-2])
+        ):
+            if df["Open"][-1] > df["Close"][-1]:
+                return "Bearish"
+            else:
+                return "Bullish"
+    else:
+        return False
+
+
+def outside_day_new(df):
+    second_last_high = df["High"][-2]
+    last_high = df["High"][-1]
+    second_last_low = df["Low"][-2]
+    last_low = df["Low"][-1]
+    if (second_last_high < last_high) and (second_last_low > last_low):
+        if (df["Close"][-1] < df["Low"][-2]) or df["Close"][-1] > df["High"][-2]:
+            if df["Open"][-1] > df["Close"][-1]:
+                return "Bearish"
+            else:
+                return "Bullish"
+    else:
+        return False
+
+
 (
 # merge 
 def bearish_key_reversal(df):
@@ -1561,125 +1659,16 @@ def three_bar_congestion_bear(df):
         return True
 )
 
-
- def ravi_above_cutoff_price_above_fractal(df, cutoff):
-     # RAVI is greater then A and price is above previous upward fractal then +X and if smaller then A then +0.
-     # RAVI is greater then A and price is below previous downward fractal then -X
-     # ravi = RAVI(df)
-     ravi = df.RAVI
-     upwardFractalIndex = find_maxima(df)
-     downwardFractalIndex = find_minima(df)
-
-     price = df["Close"][-1]
-
-     prevUpwardFractal = df.iloc[upwardFractalIndex[-1]].High
-     prevdownwardFractal = df.iloc[downwardFractalIndex[-1]].Low
-
-     if ravi > cutoff:
-         if price > prevUpwardFractal:
-             return True
-         if price < prevdownwardFractal:
-             return False
-
-
- def fractal_breakout(df):
-     # Previous upward fractal breakout then +X, previous downward fractal breakout then -X (breakout means crossing over)
-     upwardFractalIndex = find_maxima(df)
-     downwardFractalIndex = find_minima(df)
-
-     prevUpwardFractal = df.iloc[upwardFractalIndex[-1]].High
-     prevdownwardFractal = df.iloc[downwardFractalIndex[-1]].Low
-
-     if prevUpwardFractal > df["High"][-2] and prevUpwardFractal < df["High"][-1]:
-         return True
-
-     if prevdownwardFractal < df["Low"][-2] and prevdownwardFractal > df["Low"][-1]:
-         return False
-
-
-
-def wide_ranging_day(df):
-    # A wide-ranging day is the day with higher volatility,higher volatility= (true range) >= 2*ATR
-    # ATR = atr(df, period)
-    # TR = true_range(df)
-    ATR = df.ATR
-    TR = df.TR
-    if (TR[-1] >= ATR[-1]) and 10 * np.abs(df["Open"][-1] - df["Close"][-1]) >= 5 * (
-        df["High"][-1] - df["Low"][-1]
-    ):
-        if df["Open"][-1] > df["Close"][-1]:
-            return "Bearish"
-        else:
-            return "Bullish"
-    else:
-        return False
-
-
-def outside_day(df):
-    second_last_high = df["High"][-2]
-    last_high = df["High"][-1]
-    second_last_low = df["Low"][-2]
-    last_low = df["Low"][-1]
-    if (second_last_high < last_high) and (second_last_low > last_low):
-        if (df["Close"][-1] < min(df["Close"][-2], df["Open"][-2])) or (
-            df["Close"][-1] > max(df["Close"][-2], df["Open"][-2])
-        ):
-            if df["Open"][-1] > df["Close"][-1]:
-                return "Bearish"
-            else:
-                return "Bullish"
-    else:
-        return False
-
-
-def outside_day_new(df):
-    second_last_high = df["High"][-2]
-    last_high = df["High"][-1]
-    second_last_low = df["Low"][-2]
-    last_low = df["Low"][-1]
-    if (second_last_high < last_high) and (second_last_low > last_low):
-        if (df["Close"][-1] < df["Low"][-2]) or df["Close"][-1] > df["High"][-2]:
-            if df["Open"][-1] > df["Close"][-1]:
-                return "Bearish"
-            else:
-                return "Bullish"
-    else:
-        return False
-
-
-
-
-
-
-
-
-
-
-
-
-def ic_bullish_wrd(df):
-    # inside candle then bullish wide ranging day.
-    if inside_day(df.iloc[:-1]) and wide_ranging_day(df) == "Bullish":
+def bearish_outside_after_inside(df):
+    # a bearish outside candle after a inside candle.
+    if inside_day(df.iloc[:-1]) and (outside_day(df) == "Bearish"):
         return True
-    return False
-
-
-def bullish_wrd_ic_bullish_wrd(df):
-    # bullish wide ranging day then inside candle then bullish wide ranging day.
-    if (
-        wide_ranging_day(df.iloc[:-2]) == "Bullish"
-        and inside_day(df.iloc[:-1])
-        and wide_ranging_day(df) == "Bullish"
-    ):
-        return True
-    return False
-
-
 
 def bullish_outside_after_inside(df):
     # a bullish outside candle after a inside candle.
     if inside_day(df.iloc[:-1]) and outside_day(df) == "Bullish":
         return True
+
 
 
 def bearish_wrd_ic_bullish_oc(df):
@@ -1692,212 +1681,14 @@ def bearish_wrd_ic_bullish_oc(df):
         return True
 
 
-def z_consecutive_close_with_x_sma_bull(df, period, maPeriod):
-    # Z consecutive close above X days SMA
-    # Z consecutive close below X days SMA
-    flag = False
-    SMA = df["Close"].rolling(maPeriod).mean()
-    for i in range(1, period + 1):
-        if df["Close"][-i] > SMA[-1]:
-            flag = True
-        else:
-            flag = False
-            break
-    if flag:
-        if (df["Close"][-period] > SMA[-period]) and (
-            df["Close"][-period - 1] < SMA[-period - 1]
-        ):
-            return True
-
-
-def z_consecutive_close_with_x_ema_bull(df, period, maPeriod):
-    # Z consecutive close above X days SMA
-    # Z consecutive close below X days SMA
-    flag = False
-    EMA = ema(df["Close"], maPeriod)
-    for i in range(1, period + 1):
-        if df["Close"][-i] > EMA[-i]:
-            flag = True
-        else:
-            flag = False
-            break
-    if flag:
-        if (df["Close"][-period] > EMA[-period]) and (
-            df["Close"][-period - 1] < EMA[-period - 1]
-        ):
-            return True
-
-
-
-
-
-def moving_avg_conditionup(df):
-    ma = df.SMA
-    if (df["Close"][-1] > ma[-1]) and (df["Close"][-2] < ma[-2]):
-        return True
-    return False
-
-
-def days_2_5_conditon2(df):
-    # two days close is less then five days close then +X
-    # two days close is greater then five days close then -X
-    conversion = {
-        "Open": "first",
-        "High": "max",
-        "Low": "min",
-        "Close": "last",
-        "Volume": "sum",
-    }
-    df_2days = df.resample("48H").apply(conversion).dropna()
-    df_5days = df.resample("120H").apply(conversion).dropna()
-    try:
-        if df_2days["Close"][-2] < df_5days["Close"][-2]:
-            return True
-    except IndexError:
-        pass
-    return False
-
-
-def avg_midpoint_condition1(df, period):
-    # The close is higher then the avg of X days midpoint
-    # The close is lower then the avg of X days midpoint
-    midpoint = (df["High"] + df["Low"]) / 2
-    # avg_midpoint = midpoint.rolling(period).mean()
-    avg_midpoint = ema(midpoint, period)
-
-    if (df["Close"][-1] > avg_midpoint[-1]) and (df["Close"][-2] < avg_midpoint[-2]):
-        return True
-
-
-def two_red_candles_condition(df):
-    # The close was less then open(two days in a row) -> two consecutive red candles
-    if df["Open"][-1] > df["Close"][-1] and df["Open"][-2] > df["Close"][-2]:
-        return True
-    return False
-
-
-def close_high_closing_Avg_conditionlow(df, period):
-    # If the close is lower than both the previous low, and the 40-day closing average
-    close = df["Close"]
-    # closing_avg = close[-period:].mean()
-    closing_avg = ema(close, period)
+def bullish_wrd_ic_bearish_oc(df):
+    # bearish wide ranging day then inside candle then bullish outside candle.
     if (
-        close[-1] < df["Low"][-2]
-        and close[-1] < closing_avg[-1]
-        and close[-2] > closing_avg[-2]
+        wide_ranging_day(df.iloc[:-2]) == "Bullish"
+        and inside_day(df.iloc[:-1])
+        and outside_day(df) == "Bearish"
     ):
         return True
-    return False
-
-
-def close_and_prev_low_condition(df):
-    # If the close is less than the previous day’s low for two days in a row
-    close = df["Close"]
-    low = df["Low"]
-    if close[-2] < low[-3] and close[-1] < low[-2]:
-        return True
-    return False
-
-
-def close_prior_close_and_avg_high_condition2(df):
-    # If the close is less than the previous close for two days in a row and the close is less than the five-day average low for three days in a row
-    close = df["Close"]
-    avg_high = df["High"].rolling(5).mean()
-
-    if close[-3] < close[-2] and close[-2] < close[-1]:
-        if (
-            close[-3] > avg_high[-3]
-            and close[-2] > avg_high[-2]
-            and close[-1] > avg_high[-1]
-        ):
-            return True
-    return False
-
-
-def high_and_close_condition2(df):
-    if df["Low"][-1] < df["Low"][-2] and df["Close"][-1] > df["Close"][-2]:
-        return True
-    return False
-
-
-# To be reapaired for new find_maxima
-def Ravi_above_cutoff_Price_above_fractal(df, cutoff):
-    # RAVI is greater then A and price is above previous upward fractal then +X and if smaller then A then +0.
-    # RAVI is greater then A and price is below previous downward fractal then -X
-    # ravi = RAVI(df)
-    ravi = df.RAVI
-    upwardFractalIndex = find_maxima(df, n=2)
-    # downwardFractalIndex = find_minima(df, n=2)
-
-    price = df["Close"][-1]
-
-    prevUpwardFractal = df.iloc[upwardFractalIndex[-1]].High
-    # prevdownwardFractal = df.iloc[downwardFractalIndex[-1]].Low
-
-    if ravi > cutoff:
-        if price > prevUpwardFractal:
-            return True
-    return False
-
-
-def crossOverMA1(df, fastperiod=20, slowperiod=8):
-    # Upward cross over of fast moving avg with slow moving avg
-    # Downward cross over of fast moving avg with slow moving avg
-    slowMA = df["Close"].rolling(slowperiod).mean()
-    fastMA = df["Close"].rolling(fastperiod).mean()
-
-    if fastMA[-2] < slowMA[-2] and fastMA[-1] > slowMA[-1]:
-        return True
-    return False
-
-
-def Close_High1(df):
-    close = df["Close"]
-    high = df["High"]
-    # Todays close is greater then the high of two days ago and yesterday close is greater then the high of 3 days ago and the close
-    # two days ago is greater then the high of 4 days ago
-    if close[-1] > high[-3] and close[-2] > high[-4] and close[-3] > high[-5]:
-        return True
-
-
-def x_up_close(df, period=5):
-    # Five down closes in a row followed by green candle whose close is higher then previous close
-    # Five up closes in a row followed by red candle whose close is lower then previous close
-    flag = False
-    if (df["Close"][-1] < df["Open"][-1]) and (df["Close"][-1] < df["Open"][-2]):
-        for i in range(2, period + 1):
-            if df["Close"][-(i + 1)] < df["Close"][-i]:
-                flag = True
-            else:
-                flag = False
-                break
-        if flag:
-            return True
-    return False
-
-
-# <----------------- BEARISH PATTERNS --------------------->
-
-
-
-
-
-def bearish_outside_after_inside(df):
-    # a bearish outside candle after a inside candle.
-    if inside_day(df.iloc[:-1]) and (outside_day(df) == "Bearish"):
-        return True
-
-
-def bullish_wrd_bearish_oc(df):
-    # bullish wide ranging day then inside candle then bearish outside candle.
-    if wide_ranging_day(df.iloc[:-2]) == "Bullish":
-        if inside_day(df.iloc[:-1]):
-            if outside_day(df) == "Bearish":
-                return True
-
-
-
-
 
 
 def ic_bearish_wrd(df):
@@ -1905,6 +1696,13 @@ def ic_bearish_wrd(df):
     if inside_day(df.iloc[:-1]) and wide_ranging_day(df) == "Bearish":
         return True
     return False
+
+def ic_bullish_wrd(df):
+    # inside candle then bullish wide ranging day.
+    if inside_day(df.iloc[:-1]) and wide_ranging_day(df) == "Bullish":
+        return True
+    return False
+
 
 
 def bearish_wrd_ic_bearish_wrd(df):
@@ -1914,6 +1712,17 @@ def bearish_wrd_ic_bearish_wrd(df):
             if wide_ranging_day(df) == "Bearish":
                 return True
     return False
+
+def bullish_wrd_ic_bullish_wrd(df):
+    # bullish wide ranging day then inside candle then bullish wide ranging day.
+    if (
+        wide_ranging_day(df.iloc[:-2]) == "Bullish"
+        and inside_day(df.iloc[:-1])
+        and wide_ranging_day(df) == "Bullish"
+    ):
+        return True
+    return False
+
 
 
 def z_consecutive_close_with_x_sma_down(df, period, maPeriod):
@@ -1932,6 +1741,24 @@ def z_consecutive_close_with_x_sma_down(df, period, maPeriod):
             df["Close"][-period - 1] > SMA[-period - 1]
         ):
             return True
+
+def z_consecutive_close_with_x_sma_bull(df, period, maPeriod):
+    # Z consecutive close above X days SMA
+    # Z consecutive close below X days SMA
+    flag = False
+    SMA = df["Close"].rolling(maPeriod).mean()
+    for i in range(1, period + 1):
+        if df["Close"][-i] > SMA[-1]:
+            flag = True
+        else:
+            flag = False
+            break
+    if flag:
+        if (df["Close"][-period] > SMA[-period]) and (
+            df["Close"][-period - 1] < SMA[-period - 1]
+        ):
+            return True
+
 
 
 def z_consecutive_close_with_x_ema_down(df, period, maPeriod):
@@ -1952,13 +1779,36 @@ def z_consecutive_close_with_x_ema_down(df, period, maPeriod):
             return True
 
 
- 
+ def z_consecutive_close_with_x_ema_bull(df, period, maPeriod):
+    # Z consecutive close above X days SMA
+    # Z consecutive close below X days SMA
+    flag = False
+    EMA = ema(df["Close"], maPeriod)
+    for i in range(1, period + 1):
+        if df["Close"][-i] > EMA[-i]:
+            flag = True
+        else:
+            flag = False
+            break
+    if flag:
+        if (df["Close"][-period] > EMA[-period]) and (
+            df["Close"][-period - 1] < EMA[-period - 1]
+        ):
+            return True
+
 
 
 def moving_avg_conditiondown(df):
     ma = df.SMA
     if (df["Close"][-1] < ma[-1]) and (df["Close"][-2] > ma[-2]):
         return True
+
+def moving_avg_conditionup(df):
+    ma = df.SMA
+    if (df["Close"][-1] > ma[-1]) and (df["Close"][-2] < ma[-2]):
+        return True
+    return False
+
 
 
 def days_2_5_conditon1(df):
@@ -1980,6 +1830,26 @@ def days_2_5_conditon1(df):
         pass
     return False
 
+def days_2_5_conditon2(df):
+    # two days close is less then five days close then +X
+    # two days close is greater then five days close then -X
+    conversion = {
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Volume": "sum",
+    }
+    df_2days = df.resample("48H").apply(conversion).dropna()
+    df_5days = df.resample("120H").apply(conversion).dropna()
+    try:
+        if df_2days["Close"][-2] < df_5days["Close"][-2]:
+            return True
+    except IndexError:
+        pass
+    return False
+
+
 
 def avg_midpoint_condition2(df, period):
     # The close is higher then the avg of X days midpoint
@@ -1990,11 +1860,29 @@ def avg_midpoint_condition2(df, period):
     if (df["Close"][-1] < avg_midpoint[-1]) and (df["Close"][-2] > avg_midpoint[-2]):
         return True
 
+def avg_midpoint_condition1(df, period):
+    # The close is higher then the avg of X days midpoint
+    # The close is lower then the avg of X days midpoint
+    midpoint = (df["High"] + df["Low"]) / 2
+    # avg_midpoint = midpoint.rolling(period).mean()
+    avg_midpoint = ema(midpoint, period)
+
+    if (df["Close"][-1] > avg_midpoint[-1]) and (df["Close"][-2] < avg_midpoint[-2]):
+        return True
+
+
 
 def two_green_candles_condition(df):
     # The close was greater then open(two days in a row) -> two consecutive green candles
     if df["Open"][-1] < df["Close"][-1] and df["Open"][-2] < df["Close"][-2]:
         return True
+
+def two_red_candles_condition(df):
+    # The close was less then open(two days in a row) -> two consecutive red candles
+    if df["Open"][-1] > df["Close"][-1] and df["Open"][-2] > df["Close"][-2]:
+        return True
+    return False
+
 
 
 def close_high_closing_Avg_conditionhigh(df, period):
@@ -2009,6 +1897,20 @@ def close_high_closing_Avg_conditionhigh(df, period):
         return True
     return False
 
+def close_high_closing_Avg_conditionlow(df, period):
+    # If the close is lower than both the previous low, and the 40-day closing average
+    close = df["Close"]
+    # closing_avg = close[-period:].mean()
+    closing_avg = ema(close, period)
+    if (
+        close[-1] < df["Low"][-2]
+        and close[-1] < closing_avg[-1]
+        and close[-2] > closing_avg[-2]
+    ):
+        return True
+    return False
+
+
 
 def close_and_prev_high_condition(df):
     # If the close is less than the previous day’s low for two days in a row
@@ -2017,6 +1919,15 @@ def close_and_prev_high_condition(df):
     if close[-2] > high[-3] and close[-1] > high[-2]:
         return True
     return False
+
+def close_and_prev_low_condition(df):
+    # If the close is less than the previous day’s low for two days in a row
+    close = df["Close"]
+    low = df["Low"]
+    if close[-2] < low[-3] and close[-1] < low[-2]:
+        return True
+    return False
+
 
 
 def close_prior_close_and_avg_low_condition1(df):
@@ -2032,29 +1943,32 @@ def close_prior_close_and_avg_low_condition1(df):
             return True
     return False
 
+def close_prior_close_and_avg_high_condition2(df):
+    # If the close is less than the previous close for two days in a row and the close is less than the five-day average low for three days in a row
+    close = df["Close"]
+    avg_high = df["High"].rolling(5).mean()
+
+    if close[-3] < close[-2] and close[-2] < close[-1]:
+        if (
+            close[-3] > avg_high[-3]
+            and close[-2] > avg_high[-2]
+            and close[-1] > avg_high[-1]
+        ):
+            return True
+    return False
+
+
 
 def high_and_close_condition1(df):
     if df["High"][-2] > df["High"][-3] and df["Close"][-2] < df["Close"][-3]:
         return True
     return False
 
+def high_and_close_condition2(df):
+    if df["Low"][-1] < df["Low"][-2] and df["Close"][-1] > df["Close"][-2]:
+        return True
+    return False
 
-def Ravi_above_cutoff_Price_below_fractal(df, cutoff):
-    # RAVI is greater then A and price is above previous upward fractal then +X and if smaller then A then +0.
-    # RAVI is greater then A and price is below previous downward fractal then -X
-    # ravi = RAVI(df)
-    ravi = df.RAVI
-    # upwardFractalIndex = find_maxima(df)
-    downwardFractalIndex = find_minima(df)
-
-    price = df["Close"][-1]
-
-    # prevUpwardFractal = df.iloc[upwardFractalIndex[-1]].High
-    prevdownwardFractal = df.iloc[downwardFractalIndex[-1]].Low
-
-    if ravi > cutoff:
-        if price < prevdownwardFractal:
-            return True
 
 
 def crossOverMA2(df, fastperiod=20, slowperiod=8):
@@ -2067,6 +1981,17 @@ def crossOverMA2(df, fastperiod=20, slowperiod=8):
         return True
     return False
 
+def crossOverMA1(df, fastperiod=20, slowperiod=8):
+    # Upward cross over of fast moving avg with slow moving avg
+    # Downward cross over of fast moving avg with slow moving avg
+    slowMA = df["Close"].rolling(slowperiod).mean()
+    fastMA = df["Close"].rolling(fastperiod).mean()
+
+    if fastMA[-2] < slowMA[-2] and fastMA[-1] > slowMA[-1]:
+        return True
+    return False
+
+
 
 def Close_High2(df):
     close = df["Close"]
@@ -2076,6 +2001,15 @@ def Close_High2(df):
     # two days ago is lower then the low of 4 days ago
     if close[-1] < low[-3] and close[-2] < low[-4] and close[-3] < low[-5]:
         return True
+
+def Close_High1(df):
+    close = df["Close"]
+    high = df["High"]
+    # Todays close is greater then the high of two days ago and yesterday close is greater then the high of 3 days ago and the close
+    # two days ago is greater then the high of 4 days ago
+    if close[-1] > high[-3] and close[-2] > high[-4] and close[-3] > high[-5]:
+        return True
+
 
 
 def x_down_close(df, period=5):
@@ -2093,6 +2027,22 @@ def x_down_close(df, period=5):
             return True
     return False
 
+def x_up_close(df, period=5):
+    # Five down closes in a row followed by green candle whose close is higher then previous close
+    # Five up closes in a row followed by red candle whose close is lower then previous close
+    flag = False
+    if (df["Close"][-1] < df["Open"][-1]) and (df["Close"][-1] < df["Open"][-2]):
+        for i in range(2, period + 1):
+            if df["Close"][-(i + 1)] < df["Close"][-i]:
+                flag = True
+            else:
+                flag = False
+                break
+        if flag:
+            return True
+    return False
+
+
 
 def high_low_condition1(df, period):
     # The highest high of the last X days occur before the lowest low of last X days
@@ -2103,35 +2053,21 @@ def high_low_condition1(df, period):
     if highest_high_idx > lowest_low_idx:
         return True
 
+def high_low_condition1(df, period):
+    # The lowest low of the last X days occur before the highest high of last X days
+    # The lowest low of the last X days occur after the highest high of last X days
+    highest_high_idx = df["High"][-period:].idxmax()
+    lowest_low_idx = df["Low"][-period:].idxmin()
 
-def bullish_wrd_ic_bearish_oc(df):
-    # bearish wide ranging day then inside candle then bullish outside candle.
-    if (
-        wide_ranging_day(df.iloc[:-2]) == "Bullish"
-        and inside_day(df.iloc[:-1])
-        and outside_day(df) == "Bearish"
-    ):
+    if highest_high_idx < lowest_low_idx:
         return True
 
-def atr_above_ema(df, period=14):
-    atr_period = df.ATR
-    ema = df.EMA_ATR
-    if atr_period[-1] > ema[-1]:
-        return True
-    else:
-        return False
 
-# carry_forward = true 
 
-def close_and_closing_avg_condition(df, period):
-    # If the close is above the 25-day closing average
-    # Period can be 25 and 40
-    close = df["Close"][:-1]
-    closing_avg = close[-period:].mean()
-    if close[-2] > closing_avg:
-        return True
 
-    else:
-        return False
+
+
+
+
 
         
