@@ -21,40 +21,6 @@ from Packages.indicators import Cuts,isResistance,isSupport,psar
 from Packages.indicators import Bear_Gap,Bull_Gap
 
 
-def is_support(df, n):
-    """Returns True if a DOWN fractal is formed else returns False after n candles
-
-    Args:
-        df ([pd.DataFrame]): [symbol data]
-        i ([int]): [fractal length]
-
-    Returns:
-        [Bool]: [Returns True if a DOWN fractal is formed else returns False]
-    """
-    down_fractals = find_minima(df, n)
-    if df.iloc[-n - 1].name == down_fractals.index[-1]:
-        return True
-    else:
-        return False
-
-
-def is_resistance(df, n):
-    """Returns True if a UP fractal is formed else returns False after n candles
-
-    Args:
-        df ([pd.DataFrame]): [symbol data]
-        i ([int]): [fractal length]
-
-    Returns:
-        [Bool]: [Returns True if a UP fractal is formed else returns False]
-    """
-    up_fractals = find_maxima(df, n)
-    if df.iloc[-n - 1].name == up_fractals.index[-1]:
-        return True
-    else:
-        return False
-
-
 def find_maxima(df, n):
     """returns a series of last up fractals
 
@@ -117,6 +83,39 @@ def fractals(df, n=2):
         .apply(lambda x: x[n] == min(x), raw=True)
     )
     return bear_fractal, bull_fractal
+
+def is_support(df, n):
+    """Returns True if a DOWN fractal is formed else returns False after n candles
+
+    Args:
+        df ([pd.DataFrame]): [symbol data]
+        i ([int]): [fractal length]
+
+    Returns:
+        [Bool]: [Returns True if a DOWN fractal is formed else returns False]
+    """
+    down_fractals = find_minima(df, n)
+    if df.iloc[-n - 1].name == down_fractals.index[-1]:
+        return True
+    else:
+        return False
+
+
+def is_resistance(df, n):
+    """Returns True if a UP fractal is formed else returns False after n candles
+
+    Args:
+        df ([pd.DataFrame]): [symbol data]
+        i ([int]): [fractal length]
+
+    Returns:
+        [Bool]: [Returns True if a UP fractal is formed else returns False]
+    """
+    up_fractals = find_maxima(df, n)
+    if df.iloc[-n - 1].name == up_fractals.index[-1]:
+        return True
+    else:
+        return False
 
 
  def Pivots(df, i):
@@ -190,46 +189,7 @@ def fractals(df, n=2):
                      maxima.append(df.iloc[i].name)
      return maxima
 
- def Minima(pivot_down, pivot_up, df):
-     """Finds Down Fractals having"""
-     minima = []
-     for i in pivot_down:
-
-         for j in range(len(pivot_up) - 1):
-             if df.iloc[i].name == df.iloc[pivot_up[j]].name:
-                 if (df.iloc[pivot_up[j]].High < df.iloc[pivot_up[j + 1]].High) or (
-                     df.iloc[pivot_up[j - 1]].High < df.iloc[pivot_up[j]].High
-                 ):
-                     minima.append(df.iloc[i].name)
-
-             elif (df.iloc[i].name > df.iloc[pivot_up[j]].name) & (
-                 df.iloc[i].name <= df.iloc[pivot_up[j + 1]].name
-             ):
-
-                 if df.iloc[pivot_up[j + 1]].High > df.iloc[pivot_up[j]].High:
-                     minima.append(df.iloc[i].name)
-     return minima
-
-
- def _maxima(pivot_up, pivot_down, df):
-     maxima = []
-     for i in pivot_up:
-
-         for j in range(len(pivot_down) - 1):
-             if df.iloc[i].name == df.iloc[pivot_down[j]].name:
-                 if (df.iloc[pivot_down[j]].Low > df.iloc[pivot_down[j + 1]].Low) or (
-                     df.iloc[pivot_down[j - 1]].Low > df.iloc[pivot_down[j]].Low
-                 ):
-                     maxima.append(df.iloc[i].name)
-             elif (df.iloc[i].name > df.iloc[pivot_down[j]].name) and (
-                 df.iloc[i].name < df.iloc[pivot_down[j + 1]].name
-             ):
-                 if df.iloc[pivot_down[j]].Low > df.iloc[pivot_down[j + 1]].Low:
-                     maxima.append(df.iloc[i].name)
-
-     return maxima
-
-
+ 
 
 def order_block_full1(df, fractal_period=2, period_adx=14):
     """Order Block on full data without the atr condition
