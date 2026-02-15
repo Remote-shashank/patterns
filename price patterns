@@ -2081,7 +2081,7 @@ def close_and_closing_avg_condition(df, period):
 
 
 
-def wide_ranging_day(df):
+def wide_ranging_day1(df):
     # A wide-ranging day is the day with higher volatility,higher volatility= (true range) >= 2*ATR
     # ATR = atr(df, period)
     # TR = true_range(df)
@@ -2091,14 +2091,25 @@ def wide_ranging_day(df):
         df["High"][-1] - df["Low"][-1]
     ):
         if df["Open"][-1] > df["Close"][-1]:
-            return "Bearish"
-        else:
-            return "Bullish"
-    else:
-        return False
+            return True
+    return False
+
+def wide_ranging_day2(df):
+    # A wide-ranging day is the day with higher volatility,higher volatility= (true range) >= 2*ATR
+    # ATR = atr(df, period)
+    # TR = true_range(df)
+    ATR = df.ATR
+    TR = df.TR
+    if (TR[-1] >= ATR[-1]) and 10 * np.abs(df["Open"][-1] - df["Close"][-1]) >= 5 * (
+        df["High"][-1] - df["Low"][-1]
+    ):
+        if df["Open"][-1] < df["Close"][-1]:
+            return True
+    return False
 
 
-def outside_day(df):
+
+def outside_day1(df):
     second_last_high = df["High"][-2]
     last_high = df["High"][-1]
     second_last_low = df["Low"][-2]
@@ -2108,14 +2119,24 @@ def outside_day(df):
             df["Close"][-1] > max(df["Close"][-2], df["Open"][-2])
         ):
             if df["Open"][-1] > df["Close"][-1]:
-                return "Bearish"
-            else:
-                return "Bullish"
-    else:
-        return False
+                return True
+    return False
+
+def outside_day2(df):
+    second_last_high = df["High"][-2]
+    last_high = df["High"][-1]
+    second_last_low = df["Low"][-2]
+    last_low = df["Low"][-1]
+    if (second_last_high < last_high) and (second_last_low > last_low):
+        if (df["Close"][-1] < min(df["Close"][-2], df["Open"][-2])) or (
+            df["Close"][-1] > max(df["Close"][-2], df["Open"][-2])
+        ):
+            if df["Open"][-1] < df["Close"][-1]:
+                return True
+    return False
 
 
-def outside_day_new(df):
+def outside_day_new1(df):
     second_last_high = df["High"][-2]
     last_high = df["High"][-1]
     second_last_low = df["Low"][-2]
@@ -2123,12 +2144,19 @@ def outside_day_new(df):
     if (second_last_high < last_high) and (second_last_low > last_low):
         if (df["Close"][-1] < df["Low"][-2]) or df["Close"][-1] > df["High"][-2]:
             if df["Open"][-1] > df["Close"][-1]:
-                return "Bearish"
-            else:
-                return "Bullish"
-    else:
-        return False
+                return True
+    return False
 
+def outside_day_new2(df):
+    second_last_high = df["High"][-2]
+    last_high = df["High"][-1]
+    second_last_low = df["Low"][-2]
+    last_low = df["Low"][-1]
+    if (second_last_high < last_high) and (second_last_low > last_low):
+        if (df["Close"][-1] < df["Low"][-2]) or df["Close"][-1] > df["High"][-2]:
+            if df["Open"][-1] < df["Close"][-1]:
+                return True
+    return False
 
 
 
