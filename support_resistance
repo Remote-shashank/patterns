@@ -1127,71 +1127,6 @@ def pivot_point_standard(DF):
     return df
 
 
-def bolinger_bands(df, window_size, num_of_std):
-    """(Dataframe,Windows_size,Sigma)
-    Returns dataframe
-    """
-
-    stock_price = df.Close
-    rolling_mean = stock_price.rolling(window=window_size).mean()
-    rolling_std = stock_price.rolling(window=window_size).std()
-    upper_band = rolling_mean + (rolling_std * num_of_std)
-    lower_band = rolling_mean - (rolling_std * num_of_std)
-    return rolling_mean, upper_band, lower_band
-
-
-def keltner_channel(DF, period_ema, n_atr):
-    """1.keltner channel:
-    Keltner Channels have a middle line, also known as a basis, and upper and lower channel lines collectively referred to
-    as the envelope.
-    The formulas for each component are below.
-    Middle Line (Basis) = EMA\\Upper Channel Line = EMA + 2 * ATR\\Lower Channel Line = EMA - 2 * ATR
-
-    """
-    df = DF.copy()
-    df["ATR"] = atr(df, n_atr)
-    EMA = ema(df.Close, period_ema)
-    df["KC_UL"] = EMA + 2 * df["ATR"]
-    df["KC_LL"] = EMA - 2 * df["ATR"]
-    return df["KC_UL"], df["KC_LL"]
-
-
-def donchian_channel(DF, n):
-    """3.Donchian channel
-    The Formula for Donchian Channels Is
-    UC = Highest High in Last N Periods
-    Middle Channel=((UC-LC)/2)
-    LC = Lowest Low in Last N periods
-    where:
-    UC=Upper channel
-    N=Number of minutes, hours, days, weeks,
-     months
-    Period=Minutes, hours, days, weeks, months
-    LC=Lower channel
-    How To Calculate Donchian Channels
-    Channel High:
-    Choose time period (N minutes/hours/days/weeks/months).
-    Compare the high print for each minute, hour, day, week or month over that period.
-    Choose the highest print.
-    Plot the result.
-
-    Channel Low:
-    Choose time period (N minutes/hours/days/weeks/months).
-    Compare the low print for each minute, hour, day, week or month over that period.
-    Choose the lowest print.
-    Plot the result.
-
-    Center Channel:
-    Choose time period (N minutes/hours/days/weeks/months).
-    Compare high and low prints for each minute, hour, day, week or month over that period.
-    Subtract the highest high print from lowest low print and divide by 2.
-    Plot the result."""
-    df = DF.copy()
-    df["UC"] = df["High"].rolling(n).max()
-    df["LC"] = df["Low"].rolling(n).min()
-    df["MC"] = df.eval("(High - Low)/2")
-    return df
-
 
 def support_resistance_area(df):
     u, d = pivots(df, 2)
@@ -1392,12 +1327,6 @@ def support_resistance_new_dbscan(df):
 
 create elliot wave s/r functionb from csv file
 
-Ichimoku 
-Tenkan-sen (conversion line) - dynamic support/resistance
-Kijun-sen (base line) - stronger support/resistance
-Senkou Span A & B (cloud boundaries) - major support/resistance zones
-The cloud itself acts as a support/resistance area
-
 PSAR (Parabolic SAR)
 psar_bull acts as support in uptrends
 psar_bear acts as resistance in downtrends
@@ -1406,14 +1335,6 @@ Supertrend (Upper & Lower
 super_trend_upper acts as resistance
 super_trend_lower acts as support
 
-EMA (Exponential Moving Average) 
 
-SMA (Simple Moving Average) 
-
-HMA (Hull Moving Average) 
-
-WMA (Weighted Moving Average)
-
-Adaptive MA with Volatility 
 
 
