@@ -129,3 +129,53 @@ def close_and_closing_avg_condition_below(df, period=20):
     if close.iloc[-2] < closing_avg:
         return True
     return False
+
+CARRY FORWARD = FALSE
+
+
+def rsi_condition(df):
+    val = df.RSI[-1]
+    if val > 60:
+        return "Bullish"
+    if val < 40:
+        return "Bearish"
+
+def mfi_condition(df):
+    val = df.MFI[-1]
+    if val > 60:
+        return "Bullish"
+    if val < 40:
+        return "Bearish"
+
+
+def stochastic_condition(df):
+    val = df.STOCHASTIC[-1]
+    if val > 60:
+        return "Bullish"
+    if val < 40:
+        return "Bearish"
+
+
+def crsi_condition(df):
+    val = df.CRSI[-1]
+    if val > 60:
+        return "Bullish"
+    if val < 40:
+        return "Bearish"
+
+
+def william_percentage_condition(df):
+    val = df.WILLIAM_PERCENTAGE_R[-1]
+    if val > 60:
+        return "Bullish"
+    if val < 40:
+        return "Bearish"
+
+
+def uo_condition(df):
+    val = df.UO[-1]
+    if val > 60:
+        return "Bullish"
+    if val < 40:
+        return "Bearish"
+
