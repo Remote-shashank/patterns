@@ -139,6 +139,8 @@ def rsi_condition(df):
         return "Bullish"
     if val < 40:
         return "Bearish"
+    if val < 60 & val > 40:
+        return "Sideways"
 
 def mfi_condition(df):
     val = df.MFI[-1]
@@ -146,6 +148,8 @@ def mfi_condition(df):
         return "Bullish"
     if val < 40:
         return "Bearish"
+    if val < 60 & val > 40:
+        return "Sideways"
 
 
 def stochastic_condition(df):
@@ -154,6 +158,8 @@ def stochastic_condition(df):
         return "Bullish"
     if val < 40:
         return "Bearish"
+    if val < 60 & val > 40:
+        return "Sideways"
 
 
 def crsi_condition(df):
@@ -162,6 +168,8 @@ def crsi_condition(df):
         return "Bullish"
     if val < 40:
         return "Bearish"
+    if val < 60 & val > 40:
+        return "Sideways"
 
 
 def william_percentage_condition(df):
@@ -170,6 +178,8 @@ def william_percentage_condition(df):
         return "Bullish"
     if val < 40:
         return "Bearish"
+    if val < 60 & val > 40:
+        return "Sideways"
 
 
 def uo_condition(df):
@@ -178,4 +188,50 @@ def uo_condition(df):
         return "Bullish"
     if val < 40:
         return "Bearish"
+    if val < 60 & val > 40:
+        return "Sideways"
+
+
+CARRY FORWARD = FALSE
+
+def stochastic_volume_condition_opposite(df):
+
+    val = df.STOCHASTIC_VOLUME.iloc[-1]
+    if val > 60:
+        return "Bearish"
+    if val < 40:
+        return "Bullish"
+    if val < 60 & val > 40:
+        return "Sideways"
+
+
+def stochastic_volume_condition(df):
+    val = df.STOCHASTIC_VOLUME.iloc[-1]
+    if val < 40:
+        return "Bearish"
+    if val > 60:
+        return "Bullish"
+    if val < 60 & val > 40:
+        return "Sideways"
+
+
+def volume_oscillator_condition_opposite(df):
+    val = df.VOLUME_OSCILLATOR.iloc[-1]
+    if val > 60:
+        return "Bearish"
+    if val < 40:
+        return "Bullish"
+    if val < 60 & val > 40:
+        return "Sideways"
+
+
+def volume_oscillator_condition(df):
+    val = df.VOLUME_OSCILLATOR.iloc[-1]
+    if val < 40:
+        return "Bearish"
+    if val > 60:
+        return "Bullish"
+    if val < 60 & val > 40:
+        return "Sideways"
+
 
