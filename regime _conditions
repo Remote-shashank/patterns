@@ -217,3 +217,19 @@ def trix_range(df):
         return "Bullish"
     if val < 10 & val > -10:
         return "Sideways"
+
+
+def up_down_regime(df, period=20):
+    """
+    Returns current market regime based on the sequence of 
+    highest high and lowest low within the lookback period.
+    """
+    highest_high_idx = df["High"].iloc[-period:].idxmax()
+    lowest_low_idx   = df["Low"].iloc[-period:].idxmin()
+
+    if highest_high_idx > lowest_low_idx:
+        return "bullish"   # low formed first → high came after
+    elif highest_high_idx < lowest_low_idx:
+        return "bearish"   # high formed first → low came after
+    else:
+        return "sideways"
