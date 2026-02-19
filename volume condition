@@ -1,37 +1,3 @@
-CARRY FORWARD = FALSE
-
-def stochastic_volume_condition_opposite(df):
-
-    val = df.STOCHASTIC_VOLUME.iloc[-1]
-    if val > 70:
-        return "Bearish"
-    if val < 30:
-        return "Bullish"
-
-
-def stochastic_volume_condition(df):
-    val = df.STOCHASTIC_VOLUME.iloc[-1]
-    if val < 30:
-        return "Bearish"
-    if val > 70:
-        return "Bullish"
-
-
-def volume_oscillator_condition_opposite(df):
-    val = df.VOLUME_OSCILLATOR.iloc[-1]
-    if val > 70:
-        return "Bearish"
-    if val < 30:
-        return "Bullish"
-
-
-def volume_oscillator_condition(df):
-    val = df.VOLUME_OSCILLATOR.iloc[-1]
-    if val < 30:
-        return "Bearish"
-    if val > 70:
-        return "Bullish"
-
 
 CARRY FORWARD = TRUE
 
