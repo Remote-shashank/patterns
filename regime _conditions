@@ -1,39 +1,5 @@
-def trix_range1(df, period=20):
-    """TRIX within 1 std dev of previous value (sideways). Exact notes logic."""
-    try:
-        if "TRIX" in df.columns:
-            trix = df.TRIX
-        else:
-            # Self-contained TRIX: 1-period ROC of triple-smoothed EMA
-            ema1 = _safe_ema(df["Close"], period)
-            ema2 = _safe_ema(ema1, period)
-            ema3 = _safe_ema(ema2, period)
-            trix = 100 * (ema3 - ema3.shift(1)) / ema3.shift(1)
-        std_dev = trix.std()
-        if trix.iloc[-1] > trix.iloc[-2] - std_dev and trix.iloc[-1] < trix.iloc[-2] + std_dev:
-            return True
-    except Exception:
-        pass
-    return False
 
-
-def trix_range2(df, period=20):
-    """TRIX below previous value minus std dev (bearish). Exact notes logic."""
-    try:
-        if "TRIX" in df.columns:
-            trix = df.TRIX
-        else:
-            ema1 = _safe_ema(df["Close"], period)
-            ema2 = _safe_ema(ema1, period)
-            ema3 = _safe_ema(ema2, period)
-            trix = 100 * (ema3 - ema3.shift(1)) / ema3.shift(1)
-        std_dev = trix.std()
-        if trix.iloc[-1] < trix.iloc[-2] - std_dev and trix.iloc[-1] < trix.iloc[-2] + std_dev:
-            return True
-    except Exception:
-        pass
-    return False
-
+    
 
 def bollinger_band_inside_keltner(df, period=20, coeff=2):
     """Bollinger Bands fully inside Keltner Channel. Exact notes logic."""
@@ -234,4 +200,20 @@ def volume_oscillator_condition(df):
     if val < 60 & val > 40:
         return "Sideways"
 
+def choppiness_index_condition(df):
+    val = df.choppiness_index.iloc[-1]
+    if val < 40:
+        return "Bearish"
+    if val > 60:
+        return "Bullish"
+    if val < 60 & val > 40:
+        return "Sideways"
 
+def trix_range(df):
+    val = df.trix.iloc[-1]
+    if val > 10:
+        return "Bearish"
+    if val < -10:
+        return "Bullish"
+    if val < 10 & val > -10:
+        return "Sideways"
