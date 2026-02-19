@@ -2159,7 +2159,521 @@ def outside_day_new2(df):
     return False
 
 
+new harmonic patterns 
 
+import numpy as np
+import pandas as pd
+from scipy.signal import argrelextrema
+
+
+def peak_detect(price, order=5):
+    """
+    Detect alternating peaks and troughs for harmonic patterns.
+    Only confirmed extrema are used — no forced last bar injection.
+    Consecutive same-type pivots are resolved by keeping the more extreme one.
+    """
+    max_idx = list(argrelextrema(price, np.greater, order=order)[0])
+    min_idx = list(argrelextrema(price, np.less, order=order)[0])
+    idx = sorted(set(max_idx + min_idx))
+
+    if len(idx) < 5:
+        raise ValueError("Not enough pivots")
+
+    max_set = set(max_idx)
+
+    alternating = [idx[0]]
+    for j in range(1, len(idx)):
+        last_is_max = alternating[-1] in max_set
+        curr_is_max = idx[j] in max_set
+        if curr_is_max != last_is_max:
+            alternating.append(idx[j])
+        else:
+            if curr_is_max and price[idx[j]] > price[alternating[-1]]:
+                alternating[-1] = idx[j]
+            elif not curr_is_max and price[idx[j]] < price[alternating[-1]]:
+                alternating[-1] = idx[j]
+
+    if len(alternating) < 5:
+        raise ValueError("Not enough alternating pivots")
+
+    current_idx = alternating[-5:]
+    current_pat = price[current_idx]
+    return current_idx, current_pat, min(current_idx), max(current_idx)
+
+
+# ─────────────────────────────────────────────
+# BULLISH PATTERNS
+# Structure: X(low) → A(high) → B(down) → C(up) → D(down)
+# Entry: next bar after D completes (long)
+# ─────────────────────────────────────────────
+
+def bullish_gartley(df):
+    """
+    Bullish Gartley harmonic pattern.
+    Returns a boolean Series — True at each bar where a new pattern completes.
+
+    Ratios:
+        AB  = 61.8% of XA
+        BC  = 38.2%-88.6% of AB
+        CD  = 127.2%-161.8% of BC
+        XD  = 78.6% retracement of XA from A
+              => abs(XD) = 0.214 * abs(XA), XD > 0 (D stays above X)
+    """
+    price = df["Close"].values
+    err = 0.10
+    last_pivot_set = None
+    detected_pivot_sets = set()
+    signals = np.zeros(len(price), dtype=bool)
+
+    for i in range(100, len(price)):
+        try:
+            current_idx, current_pat, start, end = peak_detect(price[:i])
+        except (ValueError, IndexError):
+            continue
+
+        pivot_key = tuple(current_idx)
+        if pivot_key == last_pivot_set:
+            continue
+        last_pivot_set = pivot_key
+        if pivot_key in detected_pivot_sets:
+            continue
+
+        XA = current_pat[1] - current_pat[0]
+        AB = current_pat[2] - current_pat[1]
+        BC = current_pat[3] - current_pat[2]
+        CD = current_pat[4] - current_pat[3]
+        XD = current_pat[4] - current_pat[0]
+
+        if XA > 0 and AB < 0 and BC > 0 and CD < 0 and XD > 0:
+            AB_range = np.array([0.618 - err, 0.618 + err]) * abs(XA)
+            BC_range = np.array([0.382 - err, 0.886 + err]) * abs(AB)
+            CD_range = np.array([1.272 - err, 1.618 + err]) * abs(BC)
+            XD_range = np.array([0.214 - err, 0.214 + err]) * abs(XA)
+
+            if (
+                AB_range[0] < abs(AB) < AB_range[1]
+                and BC_range[0] < abs(BC) < BC_range[1]
+                and CD_range[0] < abs(CD) < CD_range[1]
+                and XD_range[0] < abs(XD) < XD_range[1]
+            ):
+                signals[i] = True
+                detected_pivot_sets.add(pivot_key)
+
+    return pd.Series(signals, index=df.index)
+
+
+def bullish_butterfly(df):
+    """
+    Bullish Butterfly harmonic pattern.
+    Returns a boolean Series — True at each bar where a new pattern completes.
+
+    Ratios:
+        AB  = 78.6% of XA
+        BC  = 38.2%-88.6% of AB
+        CD  = 161.8%-261.8% of BC
+        XD  = 127.2%-161.8% extension of XA
+              => abs(XD) > abs(XA), XD < 0 (D extends below X)
+    """
+    price = df["Close"].values
+    err = 0.10
+    last_pivot_set = None
+    detected_pivot_sets = set()
+    signals = np.zeros(len(price), dtype=bool)
+
+    for i in range(100, len(price)):
+        try:
+            current_idx, current_pat, start, end = peak_detect(price[:i])
+        except (ValueError, IndexError):
+            continue
+
+        pivot_key = tuple(current_idx)
+        if pivot_key == last_pivot_set:
+            continue
+        last_pivot_set = pivot_key
+        if pivot_key in detected_pivot_sets:
+            continue
+
+        XA = current_pat[1] - current_pat[0]
+        AB = current_pat[2] - current_pat[1]
+        BC = current_pat[3] - current_pat[2]
+        CD = current_pat[4] - current_pat[3]
+        XD = current_pat[4] - current_pat[0]
+
+        if XA > 0 and AB < 0 and BC > 0 and CD < 0 and XD < 0:
+            AB_range = np.array([0.786 - err, 0.786 + err]) * abs(XA)
+            BC_range = np.array([0.382 - err, 0.886 + err]) * abs(AB)
+            CD_range = np.array([1.618 - err, 2.618 + err]) * abs(BC)
+            XD_range = np.array([1.272 - err, 1.618 + err]) * abs(XA)
+
+            if (
+                AB_range[0] < abs(AB) < AB_range[1]
+                and BC_range[0] < abs(BC) < BC_range[1]
+                and CD_range[0] < abs(CD) < CD_range[1]
+                and XD_range[0] < abs(XD) < XD_range[1]
+            ):
+                signals[i] = True
+                detected_pivot_sets.add(pivot_key)
+
+    return pd.Series(signals, index=df.index)
+
+
+def bullish_crab(df):
+    """
+    Bullish Crab harmonic pattern.
+    Returns a boolean Series — True at each bar where a new pattern completes.
+
+    Ratios:
+        AB  = 38.2%-61.8% of XA
+        BC  = 38.2%-88.6% of AB
+        CD  = 224%-361.8% of BC
+        XD  = 161.8%-261.8% extension of XA
+              => D makes most aggressive extension below X, XD < 0
+    """
+    price = df["Close"].values
+    err = 0.10
+    last_pivot_set = None
+    detected_pivot_sets = set()
+    signals = np.zeros(len(price), dtype=bool)
+
+    for i in range(100, len(price)):
+        try:
+            current_idx, current_pat, start, end = peak_detect(price[:i])
+        except (ValueError, IndexError):
+            continue
+
+        pivot_key = tuple(current_idx)
+        if pivot_key == last_pivot_set:
+            continue
+        last_pivot_set = pivot_key
+        if pivot_key in detected_pivot_sets:
+            continue
+
+        XA = current_pat[1] - current_pat[0]
+        AB = current_pat[2] - current_pat[1]
+        BC = current_pat[3] - current_pat[2]
+        CD = current_pat[4] - current_pat[3]
+        XD = current_pat[4] - current_pat[0]
+
+        if XA > 0 and AB < 0 and BC > 0 and CD < 0 and XD < 0:
+            AB_range = np.array([0.382 - err, 0.618 + err]) * abs(XA)
+            BC_range = np.array([0.382 - err, 0.886 + err]) * abs(AB)
+            CD_range = np.array([2.240 - err, 3.618 + err]) * abs(BC)
+            XD_range = np.array([1.618 - err, 2.618 + err]) * abs(XA)
+
+            if (
+                AB_range[0] < abs(AB) < AB_range[1]
+                and BC_range[0] < abs(BC) < BC_range[1]
+                and CD_range[0] < abs(CD) < CD_range[1]
+                and XD_range[0] < abs(XD) < XD_range[1]
+            ):
+                signals[i] = True
+                detected_pivot_sets.add(pivot_key)
+
+    return pd.Series(signals, index=df.index)
+
+
+def bullish_cypher(df):
+    """
+    Bullish Cypher harmonic pattern.
+    Returns a boolean Series — True at each bar where a new pattern completes.
+
+    Ratios:
+        AB  = 38.2%-61.8% of XA
+        BC  = 113%-141.4% of XA (extension of XA, not AB)
+        CD  = 127.2%-200% of BC
+        XD  = 78.6% retracement of XC from C
+              => abs(XD) = 0.214 * abs(XC), XD > 0 (D stays above X)
+    """
+    price = df["Close"].values
+    err = 0.10
+    last_pivot_set = None
+    detected_pivot_sets = set()
+    signals = np.zeros(len(price), dtype=bool)
+
+    for i in range(100, len(price)):
+        try:
+            current_idx, current_pat, start, end = peak_detect(price[:i])
+        except (ValueError, IndexError):
+            continue
+
+        pivot_key = tuple(current_idx)
+        if pivot_key == last_pivot_set:
+            continue
+        last_pivot_set = pivot_key
+        if pivot_key in detected_pivot_sets:
+            continue
+
+        XA = current_pat[1] - current_pat[0]
+        AB = current_pat[2] - current_pat[1]
+        BC = current_pat[3] - current_pat[2]
+        CD = current_pat[4] - current_pat[3]
+        XC = current_pat[3] - current_pat[0]
+        XD = current_pat[4] - current_pat[0]
+
+        if XA > 0 and AB < 0 and BC > 0 and CD < 0 and XD > 0:
+            AB_range = np.array([0.382 - err, 0.618 + err]) * abs(XA)
+            BC_range = np.array([1.130 - err, 1.414 + err]) * abs(XA)  # BC vs XA
+            CD_range = np.array([1.272 - err, 2.000 + err]) * abs(BC)
+            XD_range = np.array([0.214 - err, 0.214 + err]) * abs(XC)  # 78.6% of XC from C
+
+            if (
+                AB_range[0] < abs(AB) < AB_range[1]
+                and BC_range[0] < abs(BC) < BC_range[1]
+                and CD_range[0] < abs(CD) < CD_range[1]
+                and XD_range[0] < abs(XD) < XD_range[1]
+            ):
+                signals[i] = True
+                detected_pivot_sets.add(pivot_key)
+
+    return pd.Series(signals, index=df.index)
+
+
+# ─────────────────────────────────────────────
+# BEARISH PATTERNS
+# Structure: X(high) → A(low) → B(up) → C(down) → D(up)
+# Entry: next bar after D completes (short)
+# ─────────────────────────────────────────────
+
+def bearish_gartley(df):
+    """
+    Bearish Gartley harmonic pattern.
+    Returns a boolean Series — True at each bar where a new pattern completes.
+
+    Ratios:
+        AB  = 61.8% of XA
+        BC  = 38.2%-88.6% of AB
+        CD  = 127.2%-161.8% of BC
+        XD  = 78.6% retracement of XA from A
+              => abs(XD) = 0.214 * abs(XA), XD < 0 (D stays below X)
+    """
+    price = df["Close"].values
+    err = 0.10
+    last_pivot_set = None
+    detected_pivot_sets = set()
+    signals = np.zeros(len(price), dtype=bool)
+
+    for i in range(100, len(price)):
+        try:
+            current_idx, current_pat, start, end = peak_detect(price[:i])
+        except (ValueError, IndexError):
+            continue
+
+        pivot_key = tuple(current_idx)
+        if pivot_key == last_pivot_set:
+            continue
+        last_pivot_set = pivot_key
+        if pivot_key in detected_pivot_sets:
+            continue
+
+        XA = current_pat[1] - current_pat[0]
+        AB = current_pat[2] - current_pat[1]
+        BC = current_pat[3] - current_pat[2]
+        CD = current_pat[4] - current_pat[3]
+        XD = current_pat[4] - current_pat[0]
+
+        if XA < 0 and AB > 0 and BC < 0 and CD > 0 and XD < 0:
+            AB_range = np.array([0.618 - err, 0.618 + err]) * abs(XA)
+            BC_range = np.array([0.382 - err, 0.886 + err]) * abs(AB)
+            CD_range = np.array([1.272 - err, 1.618 + err]) * abs(BC)
+            XD_range = np.array([0.214 - err, 0.214 + err]) * abs(XA)
+
+            if (
+                AB_range[0] < abs(AB) < AB_range[1]
+                and BC_range[0] < abs(BC) < BC_range[1]
+                and CD_range[0] < abs(CD) < CD_range[1]
+                and XD_range[0] < abs(XD) < XD_range[1]
+            ):
+                signals[i] = True
+                detected_pivot_sets.add(pivot_key)
+
+    return pd.Series(signals, index=df.index)
+
+
+def bearish_butterfly(df):
+    """
+    Bearish Butterfly harmonic pattern.
+    Returns a boolean Series — True at each bar where a new pattern completes.
+
+    Ratios:
+        AB  = 78.6% of XA
+        BC  = 38.2%-88.6% of AB
+        CD  = 161.8%-261.8% of BC
+        XD  = 127.2%-161.8% extension of XA
+              => abs(XD) > abs(XA), XD > 0 (D extends above X)
+    """
+    price = df["Close"].values
+    err = 0.10
+    last_pivot_set = None
+    detected_pivot_sets = set()
+    signals = np.zeros(len(price), dtype=bool)
+
+    for i in range(100, len(price)):
+        try:
+            current_idx, current_pat, start, end = peak_detect(price[:i])
+        except (ValueError, IndexError):
+            continue
+
+        pivot_key = tuple(current_idx)
+        if pivot_key == last_pivot_set:
+            continue
+        last_pivot_set = pivot_key
+        if pivot_key in detected_pivot_sets:
+            continue
+
+        XA = current_pat[1] - current_pat[0]
+        AB = current_pat[2] - current_pat[1]
+        BC = current_pat[3] - current_pat[2]
+        CD = current_pat[4] - current_pat[3]
+        XD = current_pat[4] - current_pat[0]
+
+        if XA < 0 and AB > 0 and BC < 0 and CD > 0 and XD > 0:
+            AB_range = np.array([0.786 - err, 0.786 + err]) * abs(XA)
+            BC_range = np.array([0.382 - err, 0.886 + err]) * abs(AB)
+            CD_range = np.array([1.618 - err, 2.618 + err]) * abs(BC)
+            XD_range = np.array([1.272 - err, 1.618 + err]) * abs(XA)
+
+            if (
+                AB_range[0] < abs(AB) < AB_range[1]
+                and BC_range[0] < abs(BC) < BC_range[1]
+                and CD_range[0] < abs(CD) < CD_range[1]
+                and XD_range[0] < abs(XD) < XD_range[1]
+            ):
+                signals[i] = True
+                detected_pivot_sets.add(pivot_key)
+
+    return pd.Series(signals, index=df.index)
+
+
+def bearish_crab(df):
+    """
+    Bearish Crab harmonic pattern.
+    Returns a boolean Series — True at each bar where a new pattern completes.
+
+    Ratios:
+        AB  = 38.2%-61.8% of XA
+        BC  = 38.2%-88.6% of AB
+        CD  = 224%-361.8% of BC
+        XD  = 161.8%-261.8% extension of XA
+              => D makes most aggressive extension above X, XD > 0
+    """
+    price = df["Close"].values
+    err = 0.10
+    last_pivot_set = None
+    detected_pivot_sets = set()
+    signals = np.zeros(len(price), dtype=bool)
+
+    for i in range(100, len(price)):
+        try:
+            current_idx, current_pat, start, end = peak_detect(price[:i])
+        except (ValueError, IndexError):
+            continue
+
+        pivot_key = tuple(current_idx)
+        if pivot_key == last_pivot_set:
+            continue
+        last_pivot_set = pivot_key
+        if pivot_key in detected_pivot_sets:
+            continue
+
+        XA = current_pat[1] - current_pat[0]
+        AB = current_pat[2] - current_pat[1]
+        BC = current_pat[3] - current_pat[2]
+        CD = current_pat[4] - current_pat[3]
+        XD = current_pat[4] - current_pat[0]
+
+        if XA < 0 and AB > 0 and BC < 0 and CD > 0 and XD > 0:
+            AB_range = np.array([0.382 - err, 0.618 + err]) * abs(XA)
+            BC_range = np.array([0.382 - err, 0.886 + err]) * abs(AB)
+            CD_range = np.array([2.240 - err, 3.618 + err]) * abs(BC)
+            XD_range = np.array([1.618 - err, 2.618 + err]) * abs(XA)
+
+            if (
+                AB_range[0] < abs(AB) < AB_range[1]
+                and BC_range[0] < abs(BC) < BC_range[1]
+                and CD_range[0] < abs(CD) < CD_range[1]
+                and XD_range[0] < abs(XD) < XD_range[1]
+            ):
+                signals[i] = True
+                detected_pivot_sets.add(pivot_key)
+
+    return pd.Series(signals, index=df.index)
+
+
+def bearish_cypher(df):
+    """
+    Bearish Cypher harmonic pattern.
+    Returns a boolean Series — True at each bar where a new pattern completes.
+
+    Ratios:
+        AB  = 38.2%-61.8% of XA
+        BC  = 113%-141.4% of XA (extension of XA, not AB)
+        CD  = 127.2%-200% of BC
+        XD  = 78.6% retracement of XC from C
+              => abs(XD) = 0.214 * abs(XC), XD < 0 (D stays below X)
+    """
+    price = df["Close"].values
+    err = 0.10
+    last_pivot_set = None
+    detected_pivot_sets = set()
+    signals = np.zeros(len(price), dtype=bool)
+
+    for i in range(100, len(price)):
+        try:
+            current_idx, current_pat, start, end = peak_detect(price[:i])
+        except (ValueError, IndexError):
+            continue
+
+        pivot_key = tuple(current_idx)
+        if pivot_key == last_pivot_set:
+            continue
+        last_pivot_set = pivot_key
+        if pivot_key in detected_pivot_sets:
+            continue
+
+        XA = current_pat[1] - current_pat[0]
+        AB = current_pat[2] - current_pat[1]
+        BC = current_pat[3] - current_pat[2]
+        CD = current_pat[4] - current_pat[3]
+        XC = current_pat[3] - current_pat[0]
+        XD = current_pat[4] - current_pat[0]
+
+        if XA < 0 and AB > 0 and BC < 0 and CD > 0 and XD < 0:
+            AB_range = np.array([0.382 - err, 0.618 + err]) * abs(XA)
+            BC_range = np.array([1.130 - err, 1.414 + err]) * abs(XA)  # BC vs XA
+            CD_range = np.array([1.272 - err, 2.000 + err]) * abs(BC)
+            XD_range = np.array([0.214 - err, 0.214 + err]) * abs(XC)  # 78.6% of XC from C
+
+            if (
+                AB_range[0] < abs(AB) < AB_range[1]
+                and BC_range[0] < abs(BC) < BC_range[1]
+                and CD_range[0] < abs(CD) < CD_range[1]
+                and XD_range[0] < abs(XD) < XD_range[1]
+            ):
+                signals[i] = True
+                detected_pivot_sets.add(pivot_key)
+
+    return pd.Series(signals, index=df.index)
+
+
+# ─────────────────────────────────────────────
+# USAGE
+# ─────────────────────────────────────────────
+
+# df["bull_gartley"]   = bullish_gartley(df)
+# df["bull_butterfly"] = bullish_butterfly(df)
+# df["bull_crab"]      = bullish_crab(df)
+# df["bull_cypher"]    = bullish_cypher(df)
+# df["bear_gartley"]   = bearish_gartley(df)
+# df["bear_butterfly"] = bearish_butterfly(df)
+# df["bear_crab"]      = bearish_crab(df)
+# df["bear_cypher"]    = bearish_cypher(df)
+
+# df["any_bullish"] = df[["bull_gartley", "bull_butterfly", "bull_crab", "bull_cypher"]].any(axis=1)
+# df["any_bearish"] = df[["bear_gartley", "bear_butterfly", "bear_crab", "bear_cypher"]].any(axis=1)
+
+# entry next bar after signal fires
+# df["long_entry"]  = df["any_bullish"].shift(1)
+# df["short_entry"] = df["any_bearish"].shift(1)
 
 
         
