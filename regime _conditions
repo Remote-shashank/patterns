@@ -1,0 +1,131 @@
+def trix_range1(df, period=20):
+    """TRIX within 1 std dev of previous value (sideways). Exact notes logic."""
+    try:
+        if "TRIX" in df.columns:
+            trix = df.TRIX
+        else:
+            # Self-contained TRIX: 1-period ROC of triple-smoothed EMA
+            ema1 = _safe_ema(df["Close"], period)
+            ema2 = _safe_ema(ema1, period)
+            ema3 = _safe_ema(ema2, period)
+            trix = 100 * (ema3 - ema3.shift(1)) / ema3.shift(1)
+        std_dev = trix.std()
+        if trix.iloc[-1] > trix.iloc[-2] - std_dev and trix.iloc[-1] < trix.iloc[-2] + std_dev:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def trix_range2(df, period=20):
+    """TRIX below previous value minus std dev (bearish). Exact notes logic."""
+    try:
+        if "TRIX" in df.columns:
+            trix = df.TRIX
+        else:
+            ema1 = _safe_ema(df["Close"], period)
+            ema2 = _safe_ema(ema1, period)
+            ema3 = _safe_ema(ema2, period)
+            trix = 100 * (ema3 - ema3.shift(1)) / ema3.shift(1)
+        std_dev = trix.std()
+        if trix.iloc[-1] < trix.iloc[-2] - std_dev and trix.iloc[-1] < trix.iloc[-2] + std_dev:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def bollinger_band_inside_keltner(df, period=20, coeff=2):
+    """Bollinger Bands fully inside Keltner Channel. Exact notes logic."""
+    try:
+        if all(c in df.columns for c in ["BB_M", "BB_U", "BB_L", "KC_UL", "KC_LL"]):
+            m, u, ll = df["BB_M"].iloc[-1], df["BB_U"].iloc[-1], df["BB_L"].iloc[-1]
+            uk, lk = df["KC_UL"].iloc[-1], df["KC_LL"].iloc[-1]
+        else:
+            # Self-contained Bollinger Bands
+            sma = df["Close"].rolling(period).mean()
+            std = df["Close"].rolling(period).std()
+            u = (sma + coeff * std).iloc[-1]
+            ll = (sma - coeff * std).iloc[-1]
+            # Self-contained Keltner Channel
+            atr_val = _safe_atr(df, period)
+            ema_val = _safe_ema(df["Close"], period)
+            uk = (ema_val + coeff * atr_val).iloc[-1]
+            lk = (ema_val - coeff * atr_val).iloc[-1]
+        if uk >= u and lk <= ll:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def bollinger_band_outside_keltner(df, period=20, coeff=2):
+    """Bollinger Bands fully outside Keltner Channel. Exact notes logic."""
+    try:
+        if all(c in df.columns for c in ["BB_M", "BB_U", "BB_L", "KC_UL", "KC_LL"]):
+            m, u, ll = df["BB_M"].iloc[-1], df["BB_U"].iloc[-1], df["BB_L"].iloc[-1]
+            uk, lk = df["KC_UL"].iloc[-1], df["KC_LL"].iloc[-1]
+        else:
+            sma = df["Close"].rolling(period).mean()
+            std = df["Close"].rolling(period).std()
+            u = (sma + coeff * std).iloc[-1]
+            ll = (sma - coeff * std).iloc[-1]
+            atr_val = _safe_atr(df, period)
+            ema_val = _safe_ema(df["Close"], period)
+            uk = (ema_val + coeff * atr_val).iloc[-1]
+            lk = (ema_val - coeff * atr_val).iloc[-1]
+        if uk <= u and lk >= ll:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def atr_above_ema(df, period=20):
+    """ATR above its EMA. Exact notes logic (1st version)."""
+    try:
+        if "ATR" in df.columns and "EMA_ATR" in df.columns:
+            atr_period = df.ATR
+            ema = df.EMA_ATR
+        else:
+            atr_period = _safe_atr(df, period)
+            ema = _safe_ema(atr_period, period)
+        if atr_period.iloc[-1] > ema.iloc[-1]:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def atr_below_ema(df, period=20):
+    """ATR below its EMA. Exact notes logic (2nd version, renamed from duplicate atr_above_ema)."""
+    try:
+        if "ATR" in df.columns and "EMA_ATR" in df.columns:
+            atr_period = df.ATR
+            ema = df.EMA_ATR
+        else:
+            atr_period = _safe_atr(df, period)
+            ema = _safe_ema(atr_period, period)
+        if atr_period.iloc[-1] < ema.iloc[-1]:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def close_and_closing_avg_condition_above(df, period=20):
+    """Close above X-day closing average. Exact notes logic (1st version)."""
+    close = df["Close"].iloc[:-1]
+    closing_avg = close.iloc[-period:].mean()
+    if close.iloc[-2] > closing_avg:
+        return True
+    return False
+
+
+def close_and_closing_avg_condition_below(df, period=20):
+    """Close below X-day closing average. Exact notes logic (2nd version)."""
+    close = df["Close"].iloc[:-1]
+    closing_avg = close.iloc[-period:].mean()
+    if close.iloc[-2] < closing_avg:
+        return True
+    return False
