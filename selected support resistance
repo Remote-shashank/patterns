@@ -1,0 +1,1466 @@
+1. first s/r
+
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+from sklearn.cluster import DBSCAN
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Data container
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class SRZone:
+    """A single active support/resistance zone."""
+    zone_high:          float
+    zone_low:           float
+    pivot_count:        int
+    intersection_count: int  = field(default=0,    repr=False)
+    price_was_inside:   bool = field(default=False, repr=False)
+    # intersection_count: cumulative count of ENTRIES into the zone
+    #   (outside->inside transitions only). Never resets.
+    #   Zone invalidated when intersection_count >= invalidation_n.
+    #
+    # price_was_inside: whether price was inside the zone on the
+    #   previous bar. Initialised False so the very first entry
+    #   (even if price is already inside at zone birth) counts as
+    #   visit 1. Each re-entry after a departure = one more visit.
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Indicator
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SupportResistanceIndicator:
+    """
+    Live / streaming Geometric Support & Resistance Indicator.
+
+    Parameters
+    ----------
+    fractal_period : int
+        Bars each side to confirm a pivot high/low (default 2).
+    pivot_window : int
+        Rolling bar window for pivot history fed into DBSCAN (default 252).
+    atr_period : int
+        ATR lookback period for epsilon computation (default 14).
+    atr_window : int
+        Bars over which mean ATR is averaged for epsilon (default 252).
+    min_samples : int
+        DBSCAN min_samples - minimum pivots to form a core point (default 3).
+    jaccard_threshold : float
+        Overlap threshold for zone replacement on rerun (default 0.65).
+    variation : int
+        1 -> pure [High, Low] clustering
+        2 -> [High, Low] + swapped duplicate trick
+
+    Usage
+    -----
+    >>> sr = SupportResistanceIndicator(fractal_period=5, variation=1)
+    >>> for i in range(1, len(df) + 1):
+    ...     result = sr.update(df.iloc[:i])
+
+    Or backtest convenience:
+    >>> results = sr.run_backtest(df)
+    """
+
+    def __init__(
+        self,
+        fractal_period:    int   = 2,
+        pivot_window:      int   = 252,
+        atr_period:        int   = 14,
+        atr_window:        int   = 252,
+        min_samples:       int   = 3,
+        jaccard_threshold: float = 0.65,
+        invalidation_n:    int   = 3,
+        variation:         int   = 1,
+    ) -> None:
+        if variation not in (1, 2):
+            raise ValueError("variation must be 1 or 2")
+        self.fractal_period    = fractal_period
+        self.pivot_window      = pivot_window
+        self.atr_period        = atr_period
+        self.atr_window        = atr_window
+        self.min_samples       = min_samples
+        self.jaccard_threshold = jaccard_threshold
+        self.invalidation_n    = invalidation_n
+        self.variation         = variation
+        self._init_state()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # State
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _init_state(self) -> None:
+        self._pivot_highs:        List[Tuple] = []    # (timestamp, High, Low)
+        self._pivot_lows:         List[Tuple] = []
+        self._active_zones:       List[SRZone] = []
+        self._last_confirmed_idx: int = -1
+
+    def reset(self) -> None:
+        """Clear all state. Call between symbols in a backtest."""
+        self._init_state()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Indicator helpers
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _true_range(df: pd.DataFrame) -> pd.Series:
+        pc = df["Close"].shift(1)
+        return pd.concat(
+            [df["High"] - df["Low"],
+             (df["High"] - pc).abs(),
+             (df["Low"]  - pc).abs()],
+            axis=1,
+        ).max(axis=1)
+
+    def _atr_series(self, df: pd.DataFrame) -> pd.Series:
+        return self._true_range(df).ewm(
+            alpha=1.0 / self.atr_period, adjust=False
+        ).mean()
+
+    def _mean_atr(self, df: pd.DataFrame) -> float:
+        """Mean ATR over the last atr_window bars — DBSCAN epsilon."""
+        return float(self._atr_series(df).iloc[-self.atr_window:].mean())
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Fractal / pivot detection
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _is_pivot_high(self, df: pd.DataFrame, idx: int) -> bool:
+        n = self.fractal_period
+        if idx < n or idx + n >= len(df):
+            return False
+        centre = df["High"].iloc[idx]
+        window = df["High"].iloc[idx - n: idx + n + 1]
+        return bool(centre == window.max() and (window == centre).sum() == 1)
+
+    def _is_pivot_low(self, df: pd.DataFrame, idx: int) -> bool:
+        n = self.fractal_period
+        if idx < n or idx + n >= len(df):
+            return False
+        centre = df["Low"].iloc[idx]
+        window = df["Low"].iloc[idx - n: idx + n + 1]
+        return bool(centre == window.min() and (window == centre).sum() == 1)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Fix 3 — Softened _maxima / _minima structural filter
+    #
+    # _maxima: keep pivot high[i] if High[i] > mean(High[i-1], High[i+1])
+    #          i.e. above the average of its two neighbours.
+    #          Edge pivots (first, last) always kept unconditionally.
+    #
+    # _minima: keep pivot low[i]  if Low[i]  < mean(Low[i-1],  Low[i+1])
+    #          Edge pivots always kept unconditionally.
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _maxima(pivots: List[Tuple]) -> List[Tuple]:
+        """Softened structural filter — keep dominant swing highs."""
+        if len(pivots) < 3:
+            return pivots
+        result = [pivots[0]]                                  # edge — always keep
+        for i in range(1, len(pivots) - 1):
+            curr_h         = pivots[i][1]
+            neighbour_mean = (pivots[i - 1][1] + pivots[i + 1][1]) / 2.0
+            if curr_h > neighbour_mean:
+                result.append(pivots[i])
+        result.append(pivots[-1])                             # edge — always keep
+        return result
+
+    @staticmethod
+    def _minima(pivots: List[Tuple]) -> List[Tuple]:
+        """Softened structural filter — keep dominant swing lows."""
+        if len(pivots) < 3:
+            return pivots
+        result = [pivots[0]]                                  # edge — always keep
+        for i in range(1, len(pivots) - 1):
+            curr_l         = pivots[i][2]
+            neighbour_mean = (pivots[i - 1][2] + pivots[i + 1][2]) / 2.0
+            if curr_l < neighbour_mean:
+                result.append(pivots[i])
+        result.append(pivots[-1])                             # edge — always keep
+        return result
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Fix 1 — Jaccard overlap helper
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _jaccard(zh_a: float, zl_a: float, zh_b: float, zl_b: float) -> float:
+        """
+        Jaccard overlap between two 1-D price zones [zl_a, zh_a] and [zl_b, zh_b].
+            Jaccard = Intersection / Union
+        Returns 0.0 if zones do not overlap at all.
+        """
+        intersection = max(0.0, min(zh_a, zh_b) - max(zl_a, zl_b))
+        union        = max(zh_a, zh_b) - min(zl_a, zl_b)
+        if union <= 0.0:
+            return 0.0
+        return intersection / union
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # DBSCAN clustering — produces fresh zone list
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _compute_zones(
+        self, pivots: List[Tuple], epsilon: float
+    ) -> List[SRZone]:
+        """
+        Run DBSCAN on pivot [High, Low] features.
+        Returns a list of SRZone with breach_count = 0.
+        Variation 2 appends swapped copy before fitting but computes
+        centroids from original points only.
+        """
+        if len(pivots) < self.min_samples:
+            return []
+
+        original = np.array([[p[1], p[2]] for p in pivots])  # [High, Low]
+
+        if self.variation == 2:
+            swapped  = original[:, ::-1].copy()               # [Low, High]
+            fit_data = np.vstack([original, swapped])
+        else:
+            fit_data = original
+
+        db = DBSCAN(eps=epsilon, min_samples=self.min_samples)
+        db.fit(fit_data)
+
+        labels = db.labels_[:len(pivots)]                     # original points only
+
+        zones = []
+        for label in set(labels):
+            if label == -1:
+                continue                                       # noise — always discard
+            mask        = labels == label
+            cluster_pts = original[mask]
+            zone_high   = float(cluster_pts[:, 0].max())     # highest High tested
+            zone_low    = float(cluster_pts[:, 1].min())     # lowest Low tested
+            pivot_count = int(mask.sum())
+            if zone_high < zone_low:                          # safety swap
+                zone_high, zone_low = zone_low, zone_high
+            zones.append(SRZone(zone_high, zone_low, pivot_count))
+
+        zones.sort(key=lambda z: z.pivot_count, reverse=True)
+        return zones
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Fix 1 — Merge new zones into active list
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _merge_zones(self, new_zones: List[SRZone]) -> None:
+        """
+        Merge a fresh DBSCAN zone list into the active zone list.
+
+        For each new zone:
+          - Find the active zone with the highest Jaccard overlap.
+          - If best Jaccard >= jaccard_threshold:
+              REPLACE that active zone (update boundaries + pivot_count,
+              preserve breach_count so the counter is not reset).
+          - If best Jaccard < jaccard_threshold:
+              ADD as a brand new zone (breach_count = 0).
+
+        Active zones not matched by any new zone are LEFT UNTOUCHED.
+        They persist in the active list until price invalidates them.
+        """
+        active = list(self._active_zones)
+
+        for nz in new_zones:
+            best_idx     = -1
+            best_jaccard = 0.0
+
+            for i, az in enumerate(active):
+                j = self._jaccard(
+                    nz.zone_high, nz.zone_low,
+                    az.zone_high, az.zone_low,
+                )
+                if j > best_jaccard:
+                    best_jaccard = j
+                    best_idx     = i
+
+            if best_jaccard >= self.jaccard_threshold and best_idx >= 0:
+                # Update in place — preserve intersection_count and price_was_inside
+                active[best_idx].zone_high          = nz.zone_high
+                active[best_idx].zone_low           = nz.zone_low
+                active[best_idx].pivot_count        = nz.pivot_count
+                # intersection_count and price_was_inside intentionally kept
+            else:
+                # Genuinely new zone — add to active list
+                active.append(nz)
+
+        active.sort(key=lambda z: z.pivot_count, reverse=True)
+        self._active_zones = active
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Invalidation — intersection-based (n cumulative bars)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _update_intersection_counts(self, cur: pd.Series) -> None:
+        """
+        Count genuine ENTRIES into the zone — outside->inside transitions.
+
+        For each active zone on each bar:
+          1. Determine if the current bar physically intersects the zone:
+                 bar_low <= zone_high  AND  bar_high >= zone_low
+          2. A count increments ONLY on an outside->inside transition:
+                 price_was_inside == False  AND  currently intersects
+             Continuous residence inside the zone (was_inside=True and
+             still intersecting) does NOT increment the count.
+          3. Update price_was_inside for the next bar.
+          4. Remove the zone when intersection_count >= invalidation_n.
+
+        Philosophy:
+            Each count = one genuine return visit after a prior departure.
+            A zone where price sits continuously accumulates at most 1
+            count (the initial entry). Only real departure-and-return
+            cycles consume the zone's significance.
+        """
+        bar_high  = float(cur["High"])
+        bar_low   = float(cur["Low"])
+        surviving = []
+
+        for z in self._active_zones:
+            currently_inside = (bar_low <= z.zone_high) and (bar_high >= z.zone_low)
+
+            # Only count on outside -> inside transition
+            if currently_inside and not z.price_was_inside:
+                z.intersection_count += 1
+
+            # Update state for next bar
+            z.price_was_inside = currently_inside
+
+            if z.intersection_count < self.invalidation_n:
+                surviving.append(z)
+            # intersection_count >= invalidation_n -> zone mitigated
+
+        self._active_zones = surviving
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Core update — call once per bar close
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def update(self, df: pd.DataFrame) -> Dict:
+        """
+        Process a single new bar.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Full OHLCV dataframe up to and including the current bar.
+            Required columns: Open, High, Low, Close, Volume.
+
+        Returns
+        -------
+        dict
+            {
+                "zones": [
+                    {"zone_high": float, "zone_low": float, "pivot_count": int},
+                    ...
+                ]
+            }
+            Sorted by pivot_count descending. Empty list if no active zones.
+        """
+        n        = self.fractal_period
+        min_bars = n * 2 + 1 + self.atr_period
+        if len(df) < min_bars:
+            return {"zones": []}
+
+        cur = df.iloc[-1]
+
+        # ── Step 1: Fractal confirmation at position [current - n] ────────────
+        confirm_idx = len(df) - 1 - n
+
+        if confirm_idx != self._last_confirmed_idx:
+            self._last_confirmed_idx = confirm_idx
+            confirmed_ts  = df.index[confirm_idx]
+            confirmed_row = df.iloc[confirm_idx]
+            new_pivot     = False
+
+            if self._is_pivot_high(df, confirm_idx):
+                self._pivot_highs.append((
+                    confirmed_ts,
+                    float(confirmed_row["High"]),
+                    float(confirmed_row["Low"]),
+                ))
+                new_pivot = True
+
+            if self._is_pivot_low(df, confirm_idx):
+                self._pivot_lows.append((
+                    confirmed_ts,
+                    float(confirmed_row["High"]),
+                    float(confirmed_row["Low"]),
+                ))
+                new_pivot = True
+
+            # ── Step 2: DBSCAN rerun + merge (Fix 1) ─────────────────────────
+            if new_pivot:
+                cutoff = (
+                    df.index[-self.pivot_window]
+                    if len(df) >= self.pivot_window
+                    else df.index[0]
+                )
+                self._pivot_highs = [p for p in self._pivot_highs if p[0] >= cutoff]
+                self._pivot_lows  = [p for p in self._pivot_lows  if p[0] >= cutoff]
+
+                # Fix 3 — softened structural filter
+                filtered_highs = self._maxima(self._pivot_highs)
+                filtered_lows  = self._minima(self._pivot_lows)
+                all_pivots     = filtered_highs + filtered_lows
+
+                if len(all_pivots) >= self.min_samples:
+                    epsilon   = self._mean_atr(df)
+                    new_zones = self._compute_zones(all_pivots, epsilon)
+                    # Fix 1 — merge new zones into active list
+                    self._merge_zones(new_zones)
+
+        # ── Step 3: Intersection count + invalidation every bar ──────────────
+        self._update_intersection_counts(cur)
+
+        return {
+            "zones": [
+                {
+                    "zone_high":   round(z.zone_high,   4),
+                    "zone_low":    round(z.zone_low,    4),
+                    "pivot_count": z.pivot_count,
+                }
+                for z in self._active_zones
+            ]
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Backtest convenience wrapper
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def run_backtest(self, df: pd.DataFrame) -> List[Dict]:
+        """
+        Run the indicator bar-by-bar over a complete historical dataset,
+        exactly replicating live bar-by-bar behaviour.
+
+        Returns
+        -------
+        list of dicts, one per bar:
+            {
+                "timestamp": <bar index label>,
+                "zones":     [...],
+            }
+        """
+        self.reset()
+        results = []
+        for i in range(1, len(df) + 1):
+            snapshot = self.update(df.iloc[:i])
+            results.append({"timestamp": df.index[i - 1], **snapshot})
+        return results
+
+
+2. Second s/r ( have two variations)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Data container
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class OrderBlock:
+    """A single identified order block."""
+    ob_timestamp: Any    # index label of the OB candle
+    ob_price: float      # High (bearish OB) or Low (bullish OB) of the OB candle
+    direction: str       # 'bullish' | 'bearish'
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Indicator
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OrderBlockIndicator:
+    """
+    Live/streaming Order Block Indicator.
+
+    Parameters
+    ----------
+    fractal_period : int
+        Bars each side required to confirm a pivot high/low (default 2).
+        A fractal is confirmed only after `fractal_period` bars have
+        closed after the candidate candle.
+    atr_period : int
+        Wilder's smoothed ATR lookback period (default 14).
+    variation : int
+        1 → simple backtrace (V1)
+        2 → structural backtrace with V1 fallback (V2)
+
+    Usage
+    -----
+    >>> ob = OrderBlockIndicator(fractal_period=2, atr_period=14, variation=1)
+    >>> for i in range(1, len(df) + 1):
+    ...     result = ob.update(df.iloc[:i])
+    ...     # result["bullish_obs"]  — list of active bullish OBs
+    ...     # result["bearish_obs"]  — list of active bearish OBs
+
+    Or use the convenience wrapper:
+    >>> results = ob.run_backtest(df)
+    """
+
+    def __init__(
+        self,
+        fractal_period: int = 2,
+        atr_period: int = 14,
+        variation: int = 1,
+    ) -> None:
+        if variation not in (1, 2):
+            raise ValueError("variation must be 1 or 2")
+        self.fractal_period = fractal_period
+        self.atr_period = atr_period
+        self.variation = variation
+        self._init_state()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # State management
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _init_state(self) -> None:
+        # Bearish pipeline — UP breakout → red-candle OB
+        self._pivot_high_ts: Optional[Any] = None   # latest confirmed pivot high
+        self._brkout_high_ts: Optional[Any] = None  # breakout candle timestamp
+        self._wait_atr_high: bool = False            # waiting for after-breakout bar
+
+        # Bullish pipeline — DOWN breakout → green-candle OB
+        self._pivot_low_ts: Optional[Any] = None
+        self._brkout_low_ts: Optional[Any] = None
+        self._wait_atr_low: bool = False
+
+        # Active OB lists — fully decoupled from pipeline state
+        self._bearish_obs: List[OrderBlock] = []
+        self._bullish_obs: List[OrderBlock] = []
+
+    def reset(self) -> None:
+        """Clear all state.  Call between symbols when running a backtest."""
+        self._init_state()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Indicator calculations
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _true_range(df: pd.DataFrame) -> pd.Series:
+        pc = df["Close"].shift(1)
+        return pd.concat(
+            [
+                df["High"] - df["Low"],
+                (df["High"] - pc).abs(),
+                (df["Low"]  - pc).abs(),
+            ],
+            axis=1,
+        ).max(axis=1)
+
+    def _atr_series(self, df: pd.DataFrame) -> pd.Series:
+        """Wilder's smoothed ATR  (EWM, alpha = 1 / period)."""
+        return self._true_range(df).ewm(
+            alpha=1.0 / self.atr_period, adjust=False
+        ).mean()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Fractal / pivot detection
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _is_pivot_high(self, df: pd.DataFrame, idx: int) -> bool:
+        """
+        True if candle at integer position `idx` is a strict pivot high:
+        its High is the unique maximum in the window
+        [idx - fractal_period  …  idx + fractal_period].
+        """
+        n = self.fractal_period
+        if idx < n or idx + n >= len(df):
+            return False
+        centre = df["High"].iloc[idx]
+        window = df["High"].iloc[idx - n: idx + n + 1]
+        return bool(centre == window.max() and (window == centre).sum() == 1)
+
+    def _is_pivot_low(self, df: pd.DataFrame, idx: int) -> bool:
+        n = self.fractal_period
+        if idx < n or idx + n >= len(df):
+            return False
+        centre = df["Low"].iloc[idx]
+        window = df["Low"].iloc[idx - n: idx + n + 1]
+        return bool(centre == window.min() and (window == centre).sum() == 1)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ATR breakout filter
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _passes_atr_filter(self, df: pd.DataFrame, brkout_ts: Any) -> bool:
+        """
+        Returns True if ANY of the 3-candle window
+        [candle before breakout | breakout candle | candle after breakout]
+        has TR > ATR.
+
+        Called on the bar that has just closed AFTER the breakout candle,
+        so all three candles are available in `df`.
+        """
+        try:
+            idx = df.index.get_loc(brkout_ts)
+        except KeyError:
+            return False
+        if idx < 1 or idx + 1 >= len(df):
+            return False
+        window = df.iloc[idx - 1: idx + 2]
+        return bool((window["TR"] > window["ATR"]).any())
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Backtrace helpers
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _between(
+        df: pd.DataFrame, ts_start: Any, ts_end: Any
+    ) -> pd.DataFrame:
+        """Candles strictly between ts_start and ts_end (both exclusive)."""
+        return df.loc[ts_start:ts_end].iloc[1:-1]
+
+    def _backtrace_v1(
+        self,
+        df: pd.DataFrame,
+        fractal_ts: Any,
+        brkout_ts: Any,
+        direction: str,
+    ) -> Tuple[Optional[Any], Optional[float]]:
+        """
+        Variation 1 — Simple Backtrace
+        ================================
+        Walk backwards from breakout candle toward fractal.
+        First opposite-colour candle encountered = OB.
+
+          UP   breakout → look for first RED   candle → OB price = candle High
+          DOWN breakout → look for first GREEN candle → OB price = candle Low
+        """
+        region = self._between(df, fractal_ts, brkout_ts)
+        if region.empty:
+            return None, None
+
+        for ts, row in region.iloc[::-1].iterrows():
+            if direction == "up"   and row["Open"] > row["Close"]:
+                return ts, float(row["High"])
+            if direction == "down" and row["Open"] < row["Close"]:
+                return ts, float(row["Low"])
+
+        return None, None
+
+    def _backtrace_v2(
+        self,
+        df: pd.DataFrame,
+        fractal_ts: Any,
+        brkout_ts: Any,
+        direction: str,
+    ) -> Tuple[Optional[Any], Optional[float]]:
+        """
+        Variation 2 — Structural Backtrace
+        =====================================
+        1. Find the single extreme candle in (fractal, breakout):
+               UP   move → candle with the lowest  Low
+               DOWN move → candle with the highest High
+        2. Walk forward from that extreme (inclusive) toward the breakout.
+           First opposite-colour candle = OB.
+        3. If no qualifying candle is found, fall back to V1.
+        """
+        region = self._between(df, fractal_ts, brkout_ts)
+        if region.empty:
+            return self._backtrace_v1(df, fractal_ts, brkout_ts, direction)
+
+        # ── Locate extreme ────────────────────────────────────────────────────
+        extreme_ts = (
+            region["Low"].idxmin()
+            if direction == "up"
+            else region["High"].idxmax()
+        )
+
+        # ── Forward scan from extreme (inclusive) ────────────────────────────
+        for ts, row in region.loc[extreme_ts:].iterrows():
+            if direction == "up"   and row["Open"] > row["Close"]:
+                return ts, float(row["High"])
+            if direction == "down" and row["Open"] < row["Close"]:
+                return ts, float(row["Low"])
+
+        # ── Fallback to V1 ────────────────────────────────────────────────────
+        return self._backtrace_v1(df, fractal_ts, brkout_ts, direction)
+
+    def _run_backtrace(
+        self,
+        df: pd.DataFrame,
+        fractal_ts: Any,
+        brkout_ts: Any,
+        direction: str,
+    ) -> Tuple[Optional[Any], Optional[float]]:
+        """Dispatch to the selected variation."""
+        if self.variation == 2:
+            return self._backtrace_v2(df, fractal_ts, brkout_ts, direction)
+        return self._backtrace_v1(df, fractal_ts, brkout_ts, direction)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # OB invalidation
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _invalidate_obs(self, cur: pd.Series, cur_atr: float) -> None:
+        """
+        Remove any active OB whose price zone has been touched by the
+        current bar's wick.
+
+        Bearish OB at P (High of red candle — sits below the fractal high):
+            After the UP breakout, price may retrace downward toward P.
+            Invalidated when  Low  ≤  P + ATR
+            (wick entered the zone [P − ATR, P + ATR] from above)
+
+        Bullish OB at P (Low of green candle — sits above the fractal low):
+            After the DOWN breakout, price may retrace upward toward P.
+            Invalidated when  High  ≥  P − ATR
+            (wick entered the zone [P − ATR, P + ATR] from below)
+        """
+        low  = float(cur["Low"])
+        high = float(cur["High"])
+
+        self._bearish_obs = [
+            ob for ob in self._bearish_obs
+            if low > ob.ob_price + cur_atr
+        ]
+        self._bullish_obs = [
+            ob for ob in self._bullish_obs
+            if high < ob.ob_price - cur_atr
+        ]
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Core update — call once per bar close
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def update(self, df: pd.DataFrame) -> Dict[str, List[Dict]]:
+        """
+        Process a single new bar.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Full OHLCV dataframe up to and including the current bar.
+            Required columns: Open, High, Low, Close.
+            Index must be ordered (e.g. DatetimeIndex or RangeIndex).
+
+        Returns
+        -------
+        dict
+            {
+                "bullish_obs": [{"ob_timestamp": …, "ob_price": …}, …],
+                "bearish_obs": [{"ob_timestamp": …, "ob_price": …}, …],
+            }
+            An empty list means no active OBs in that direction.
+        """
+        n = self.fractal_period
+        # Need enough bars to: confirm a fractal (n each side) + ATR warmup
+        if len(df) < n * 2 + 1 + self.atr_period:
+            return {"bullish_obs": [], "bearish_obs": []}
+
+        # ── Attach TR / ATR to a working copy ─────────────────────────────────
+        df = df.copy()
+        df["TR"]  = self._true_range(df)
+        df["ATR"] = self._atr_series(df)
+
+        current_ts = df.index[-1]
+        cur        = df.iloc[-1]
+        cur_atr    = float(cur["ATR"])
+
+        # ─────────────────────────────────────────────────────────────────────
+        # STEP 1 — Fractal confirmation
+        #
+        # The candle exactly `n` positions before the latest has now had
+        # `n` bars close after it, so we can confirm whether it is a pivot.
+        #
+        # Invariant (guaranteed by fractal_period ≥ 2 + 1-bar ATR wait):
+        #   a same-direction fractal can NEVER form while _wait_atr_* is True,
+        #   so the `confirmed_ts != self._pivot_*_ts` guard is sufficient.
+        # ─────────────────────────────────────────────────────────────────────
+        confirm_idx  = len(df) - 1 - n
+        confirmed_ts = df.index[confirm_idx]
+
+        if self._is_pivot_high(df, confirm_idx):
+            if confirmed_ts != self._pivot_high_ts:
+                # New (more recent) fractal high — replace and reset pipeline
+                self._pivot_high_ts  = confirmed_ts
+                self._brkout_high_ts = None
+                self._wait_atr_high  = False
+
+        if self._is_pivot_low(df, confirm_idx):
+            if confirmed_ts != self._pivot_low_ts:
+                self._pivot_low_ts  = confirmed_ts
+                self._brkout_low_ts = None
+                self._wait_atr_low  = False
+
+        # ─────────────────────────────────────────────────────────────────────
+        # STEP 2 — Bearish pipeline  (UP breakout → red-candle OB)
+        # ─────────────────────────────────────────────────────────────────────
+        if self._pivot_high_ts is not None:
+            pivot_high_price = float(df.loc[self._pivot_high_ts, "High"])
+
+            if self._wait_atr_high:
+                # ── Current bar is the candle AFTER the breakout ──────────────
+                # Run the ATR filter over the 3-candle window now that it is
+                # fully closed.
+                if self._passes_atr_filter(df, self._brkout_high_ts):
+                    ob_ts, ob_price = self._run_backtrace(
+                        df,
+                        self._pivot_high_ts,
+                        self._brkout_high_ts,
+                        "up",
+                    )
+                    if ob_ts is not None:
+                        self._bearish_obs.append(
+                            OrderBlock(ob_ts, ob_price, "bearish")
+                        )
+
+                # Fractal is now consumed (wick already crossed it).
+                # Reset the full pipeline — wait for the next fresh fractal.
+                self._pivot_high_ts  = None
+                self._brkout_high_ts = None
+                self._wait_atr_high  = False
+
+            else:
+                # ── Watch for any wick crossing above the fractal high ────────
+                if float(cur["High"]) > pivot_high_price:
+                    self._brkout_high_ts = current_ts
+                    self._wait_atr_high  = True
+
+        # ─────────────────────────────────────────────────────────────────────
+        # STEP 3 — Bullish pipeline  (DOWN breakout → green-candle OB)
+        # ─────────────────────────────────────────────────────────────────────
+        if self._pivot_low_ts is not None:
+            pivot_low_price = float(df.loc[self._pivot_low_ts, "Low"])
+
+            if self._wait_atr_low:
+                if self._passes_atr_filter(df, self._brkout_low_ts):
+                    ob_ts, ob_price = self._run_backtrace(
+                        df,
+                        self._pivot_low_ts,
+                        self._brkout_low_ts,
+                        "down",
+                    )
+                    if ob_ts is not None:
+                        self._bullish_obs.append(
+                            OrderBlock(ob_ts, ob_price, "bullish")
+                        )
+
+                self._pivot_low_ts  = None
+                self._brkout_low_ts = None
+                self._wait_atr_low  = False
+
+            else:
+                if float(cur["Low"]) < pivot_low_price:
+                    self._brkout_low_ts = current_ts
+                    self._wait_atr_low  = True
+
+        # ─────────────────────────────────────────────────────────────────────
+        # STEP 4 — Invalidate OBs that have been touched this bar
+        # ─────────────────────────────────────────────────────────────────────
+        self._invalidate_obs(cur, cur_atr)
+
+        # ─────────────────────────────────────────────────────────────────────
+        # Return snapshot of all currently active OBs
+        # ─────────────────────────────────────────────────────────────────────
+        return {
+            "bullish_obs": [
+                {"ob_timestamp": ob.ob_timestamp, "ob_price": ob.ob_price}
+                for ob in self._bullish_obs
+            ],
+            "bearish_obs": [
+                {"ob_timestamp": ob.ob_timestamp, "ob_price": ob.ob_price}
+                for ob in self._bearish_obs
+            ],
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Backtest convenience wrapper
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def run_backtest(self, df: pd.DataFrame) -> List[Dict]:
+        """
+        Run the indicator bar-by-bar over a complete historical dataset,
+        exactly replicating live bar-by-bar behaviour.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Full OHLCV dataframe (Open, High, Low, Close).
+
+        Returns
+        -------
+        list of dicts, one per bar:
+            {
+                "timestamp"  : <bar index label>,
+                "bullish_obs": [...],
+                "bearish_obs": [...],
+            }
+        """
+        self.reset()
+        results = []
+        for i in range(1, len(df) + 1):
+            snapshot = self.update(df.iloc[:i])
+            results.append({"timestamp": df.index[i - 1], **snapshot})
+        return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Quick usage demo  (runs when executed directly)
+# ─────────────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import numpy as np
+
+    # ── Generate synthetic OHLCV data ─────────────────────────────────────────
+    rng = np.random.default_rng(42)
+    n   = 300
+    close = 100 + np.cumsum(rng.normal(0, 1, n))
+    noise = rng.uniform(0.1, 0.8, n)
+    high  = close + noise
+    low   = close - noise
+    open_ = close - rng.normal(0, 0.3, n)
+
+    idx = pd.date_range("2023-01-01", periods=n, freq="1h")
+    df  = pd.DataFrame(
+        {"Open": open_, "High": high, "Low": low, "Close": close}, index=idx
+    )
+
+    # ── Run both variations ───────────────────────────────────────────────────
+    for var in (1, 2):
+        ob = OrderBlockIndicator(fractal_period=2, atr_period=14, variation=var)
+        results = ob.run_backtest(df)
+
+        # Collect bars where new OBs appeared
+        all_bearish, all_bullish = [], []
+        for r in results:
+            for o in r["bearish_obs"]:
+                if o not in all_bearish:
+                    all_bearish.append(o)
+            for o in r["bullish_obs"]:
+                if o not in all_bullish:
+                    all_bullish.append(o)
+
+        print(f"\n── Variation {var} ──────────────────────────────")
+        print(f"  Bearish OBs found : {len(all_bearish)}")
+        print(f"  Bullish OBs found : {len(all_bullish)}")
+        if all_bearish:
+            b = all_bearish[0]
+            print(f"  First bearish OB  : ts={b['ob_timestamp']}  price={b['ob_price']:.4f}")
+        if all_bullish:
+            g = all_bullish[0]
+            print(f"  First bullish OB  : ts={g['ob_timestamp']}  price={g['ob_price']:.4f}")
+
+
+3. third s/r 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Data containers
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class HVNZone:
+    """A single active HVN zone."""
+    zone_high:          float
+    zone_low:           float
+    zone_volume:        float
+    intersection_count: int  = field(default=0,     repr=False)
+    price_was_inside:   bool = field(default=False,  repr=False)
+    in_profile:         bool = field(default=True,   repr=False)
+    # in_profile: True if this zone was matched by the most recent
+    # DBSCAN/profile rerun. Used to track Condition 2 invalidation.
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Indicator
+# ─────────────────────────────────────────────────────────────────────────────
+
+class HVNIndicator:
+    """
+    Live / streaming High Volume Node Support & Resistance Indicator.
+
+    Parameters
+    ----------
+    window : int
+        Rolling bar window for volume profile construction (default 252).
+    atr_period : int
+        ATR lookback period; bucket_size = ATR × atr_factor (default 14).
+    atr_factor : float
+        Multiplier for ATR to set bucket size (default 0.5).
+    k : float
+        HVN threshold: bucket qualifies if volume > mean + k × std (default 1.0).
+    jaccard_threshold : float
+        Overlap threshold for zone replacement on profile rerun (default 0.65).
+    invalidation_n : int
+        Number of entry visits before a zone is considered mitigated (default 3).
+
+    Usage
+    -----
+    >>> hvn = HVNIndicator()
+    >>> for i in range(1, len(df) + 1):
+    ...     result = hvn.update(df.iloc[:i])
+
+    Or backtest convenience:
+    >>> results = hvn.run_backtest(df)
+    """
+
+    def __init__(
+        self,
+        window:            int   = 252,
+        atr_period:        int   = 14,
+        atr_factor:        float = 0.5,
+        k:                 float = 1.0,
+        jaccard_threshold: float = 0.65,
+        invalidation_n:    int   = 3,
+        proximity_n:       float = 5.0,
+    ) -> None:
+        self.window            = window
+        self.atr_period        = atr_period
+        self.atr_factor        = atr_factor
+        self.k                 = k
+        self.jaccard_threshold = jaccard_threshold
+        self.invalidation_n    = invalidation_n
+        self.proximity_n       = proximity_n
+        self._init_state()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # State
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _init_state(self) -> None:
+        self._active_zones: List[HVNZone] = []
+
+    def reset(self) -> None:
+        """Clear all state. Call between symbols in a backtest."""
+        self._init_state()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ATR helper
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _true_range(df: pd.DataFrame) -> pd.Series:
+        pc = df["Close"].shift(1)
+        return pd.concat(
+            [df["High"] - df["Low"],
+             (df["High"] - pc).abs(),
+             (df["Low"]  - pc).abs()],
+            axis=1,
+        ).max(axis=1)
+
+    def _atr(self, df: pd.DataFrame) -> float:
+        """Current ATR value (EMA-based)."""
+        tr = self._true_range(df)
+        atr_series = tr.ewm(alpha=1.0 / self.atr_period, adjust=False).mean()
+        return float(atr_series.iloc[-1])
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Jaccard overlap
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _jaccard(zh_a: float, zl_a: float, zh_b: float, zl_b: float) -> float:
+        """Jaccard overlap between two 1-D price zones."""
+        intersection = max(0.0, min(zh_a, zh_b) - max(zl_a, zl_b))
+        union        = max(zh_a, zh_b) - min(zl_a, zl_b)
+        return intersection / union if union > 0.0 else 0.0
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Volume profile construction
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _build_profile(
+        self, window_df: pd.DataFrame, bucket_size: float
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Build a volume profile over window_df.
+
+        Returns
+        -------
+        bucket_lows : np.ndarray
+            Lower boundary of each bucket.
+        bucket_vols : np.ndarray
+            Total volume accumulated in each bucket.
+        """
+        # Floor-aligned grid
+        min_low   = float(window_df["Low"].min())
+        max_high  = float(window_df["High"].max())
+        grid_start = math.floor(min_low  / bucket_size) * bucket_size
+        grid_end   = math.ceil(max_high  / bucket_size) * bucket_size
+
+        n_buckets  = max(1, round((grid_end - grid_start) / bucket_size))
+        bucket_lows = np.array(
+            [grid_start + i * bucket_size for i in range(n_buckets)]
+        )
+        bucket_vols = np.zeros(n_buckets)
+
+        for _, row in window_df.iterrows():
+            bar_high   = float(row["High"])
+            bar_low    = float(row["Low"])
+            bar_vol    = float(row["Volume"])
+            bar_range  = bar_high - bar_low
+
+            if bar_range <= 0:
+                # Doji — assign full volume to bucket containing Close
+                close = float(row["Close"])
+                idx   = int((close - grid_start) / bucket_size)
+                idx   = max(0, min(n_buckets - 1, idx))
+                bucket_vols[idx] += bar_vol
+                continue
+
+            # Distribute volume uniformly across overlapping buckets
+            for i, bl in enumerate(bucket_lows):
+                bt = bl + bucket_size          # bucket top
+                overlap = max(0.0, min(bar_high, bt) - max(bar_low, bl))
+                if overlap > 0:
+                    bucket_vols[i] += bar_vol * (overlap / bar_range)
+
+        return bucket_lows, bucket_vols
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # HVN identification and zone merging
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _identify_hvn_zones(
+        self, bucket_lows: np.ndarray, bucket_vols: np.ndarray,
+        bucket_size: float
+    ) -> List[HVNZone]:
+        """
+        Identify HVN buckets and merge adjacent ones into zones.
+
+        HVN threshold: bucket_volume > mean + k × std
+
+        Merge rule: adjacent HVN buckets merge into one zone.
+        A non-HVN bucket breaks the chain — A and C never merge
+        across a non-HVN B.
+        """
+        if len(bucket_vols) == 0:
+            return []
+
+        mean_vol = float(np.mean(bucket_vols))
+        std_vol  = float(np.std(bucket_vols))
+        threshold = mean_vol + self.k * std_vol
+
+        is_hvn = bucket_vols > threshold
+
+        zones        = []
+        in_zone      = False
+        zone_low     = 0.0
+        zone_vol_acc = 0.0
+
+        for i, (bl, bv) in enumerate(zip(bucket_lows, bucket_vols)):
+            bt = bl + bucket_size
+            if is_hvn[i]:
+                if not in_zone:
+                    # Start a new zone
+                    zone_low     = bl
+                    zone_vol_acc = 0.0
+                    in_zone      = True
+                zone_vol_acc += bv
+                zone_high_current = bt
+            else:
+                if in_zone:
+                    # Close the current zone
+                    zones.append(HVNZone(
+                        zone_high   = zone_high_current,
+                        zone_low    = zone_low,
+                        zone_volume = zone_vol_acc,
+                    ))
+                    in_zone = False
+
+        # Close final zone if still open
+        if in_zone:
+            zones.append(HVNZone(
+                zone_high   = zone_high_current,
+                zone_low    = zone_low,
+                zone_volume = zone_vol_acc,
+            ))
+
+        zones.sort(key=lambda z: z.zone_volume, reverse=True)
+        return zones
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Merge new zones into active list (Jaccard-based persistence)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _merge_zones(self, new_zones: List[HVNZone]) -> None:
+        """
+        Merge fresh profile zones into the active zone list.
+
+        For each new zone:
+            Best Jaccard ≥ threshold → replace existing zone
+                (update boundaries + volume, preserve counters)
+            Best Jaccard < threshold → add as new zone
+
+        Active zones not matched by any new zone:
+            → mark in_profile = False (triggers Condition 2 check)
+        """
+        active = list(self._active_zones)
+
+        # Reset in_profile flag — will be set True for matched zones
+        for az in active:
+            az.in_profile = False
+
+        for nz in new_zones:
+            best_j, best_idx = 0.0, -1
+            for i, az in enumerate(active):
+                j = self._jaccard(nz.zone_high, nz.zone_low,
+                                  az.zone_high, az.zone_low)
+                if j > best_j:
+                    best_j, best_idx = j, i
+
+            if best_j >= self.jaccard_threshold and best_idx >= 0:
+                # Update in place — preserve intersection_count + price_was_inside
+                active[best_idx].zone_high   = nz.zone_high
+                active[best_idx].zone_low    = nz.zone_low
+                active[best_idx].zone_volume = nz.zone_volume
+                active[best_idx].in_profile  = True
+            else:
+                # Genuinely new zone
+                nz.in_profile = True
+                active.append(nz)
+
+        active.sort(key=lambda z: z.zone_volume, reverse=True)
+        self._active_zones = active
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Intersection count update (entry-based)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _update_intersection_counts(self, cur: pd.Series) -> None:
+        """
+        Count genuine entries into each zone (outside → inside transitions).
+        Update price_was_inside for next bar.
+        """
+        bar_high = float(cur["High"])
+        bar_low  = float(cur["Low"])
+
+        for z in self._active_zones:
+            currently_inside = (bar_low <= z.zone_high) and (bar_high >= z.zone_low)
+            if currently_inside and not z.price_was_inside:
+                z.intersection_count += 1
+            z.price_was_inside = currently_inside
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Invalidation
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _invalidate_zones(self) -> None:
+        """
+        Remove zones that meet either invalidation condition.
+
+        Condition 1 — Price mitigation:
+            intersection_count >= invalidation_n → remove always
+
+        Condition 2 — Volume fade + prior engagement:
+            not in_profile AND intersection_count > 0 → remove
+
+        Never-remove rule:
+            not in_profile AND intersection_count == 0 → KEEP
+            (unvisited HVN — strongest level, institutional
+             positions untouched)
+        """
+        surviving = []
+        for z in self._active_zones:
+            # Condition 1 — fully mitigated by price
+            if z.intersection_count >= self.invalidation_n:
+                continue
+            # Condition 2 — volume faded AND price has visited
+            if not z.in_profile and z.intersection_count > 0:
+                continue
+            surviving.append(z)
+        self._active_zones = surviving
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Proximity filter — output layer only
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _proximity_filter(
+        self, zones: List[HVNZone], close: float, atr: float
+    ) -> List[HVNZone]:
+        """
+        Filter active zones to only those within proximity_n × ATR
+        of the current close price.
+
+        Distance calculation:
+            Price inside zone  → distance = 0  (always included)
+            Price above zone   → distance = close - zone_high
+            Price below zone   → distance = zone_low - close
+
+        Zones outside the proximity band are kept internally —
+        they will reappear in output if price moves toward them.
+        """
+        max_distance = self.proximity_n * atr
+        result = []
+        for z in zones:
+            if close >= z.zone_low and close <= z.zone_high:
+                distance = 0.0
+            elif close > z.zone_high:
+                distance = close - z.zone_high
+            else:
+                distance = z.zone_low - close
+
+            if distance <= max_distance:
+                result.append(z)
+        return result
+
+    def _consolidate_output(
+        self, zones: List[HVNZone], bucket_size: float
+    ) -> List[dict]:
+        """
+        Consolidate overlapping or near-adjacent visible zones into clean
+        output zones before returning to the caller.
+
+        Two zones are merged when:
+            zone_B_low <= zone_A_high + bucket_size
+            i.e. they overlap OR are separated by ≤ 1 bucket_size gap
+
+        This collapses clusters that arise from bucket grid boundary
+        artifacts — zones that are institutionally the same level but
+        got split by the grid alignment.
+
+        Merge result:
+            zone_high   = max of the two zone_highs
+            zone_low    = min of the two zone_lows
+            zone_volume = sum (combined institutional interest)
+
+        Returns plain dicts sorted by zone_volume descending.
+        Internal HVNZone objects are NOT modified.
+        """
+        if not zones:
+            return []
+
+        # Sort by zone_low ascending for the sweep
+        sorted_zones = sorted(zones, key=lambda z: z.zone_low)
+
+        merged = []
+        cur_low    = sorted_zones[0].zone_low
+        cur_high   = sorted_zones[0].zone_high
+        cur_volume = sorted_zones[0].zone_volume
+
+        for z in sorted_zones[1:]:
+            if z.zone_low <= cur_high + bucket_size:
+                # Overlapping or within 1 bucket_size gap → extend
+                cur_high   = max(cur_high, z.zone_high)
+                cur_volume += z.zone_volume
+            else:
+                # Gap too large → close current, start new
+                merged.append({
+                    "zone_high":   round(cur_high,   4),
+                    "zone_low":    round(cur_low,    4),
+                    "zone_volume": round(cur_volume, 2),
+                })
+                cur_low    = z.zone_low
+                cur_high   = z.zone_high
+                cur_volume = z.zone_volume
+
+        # Close final zone
+        merged.append({
+            "zone_high":   round(cur_high,   4),
+            "zone_low":    round(cur_low,    4),
+            "zone_volume": round(cur_volume, 2),
+        })
+
+        merged.sort(key=lambda z: z["zone_volume"], reverse=True)
+        return merged
+
+    def update(self, df: pd.DataFrame) -> Dict:
+        """
+        Process a single new bar.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Full OHLCV dataframe up to and including the current bar.
+            Required columns: Open, High, Low, Close, Volume.
+
+        Returns
+        -------
+        dict
+            {
+                "hvn_zones": [
+                    {
+                        "zone_high":   float,
+                        "zone_low":    float,
+                        "zone_volume": float,
+                    },
+                    ...
+                ]
+            }
+            Sorted by zone_volume descending. Empty list if no active zones.
+        """
+        min_bars = max(self.window, self.atr_period + 1)
+        if len(df) < min_bars:
+            return {"hvn_zones": [], "all_active": []}
+
+        cur       = df.iloc[-1]
+        window_df = df.iloc[-self.window:]
+
+        # ── Step 1: ATR → bucket size ─────────────────────────────────────
+        bucket_size = self._atr(df) * self.atr_factor
+        if bucket_size <= 0:
+            return {"hvn_zones": [], "all_active": []}
+
+        # ── Step 2: Build volume profile ──────────────────────────────────
+        bucket_lows, bucket_vols = self._build_profile(window_df, bucket_size)
+
+        # ── Step 3: Identify HVN zones ────────────────────────────────────
+        new_zones = self._identify_hvn_zones(bucket_lows, bucket_vols, bucket_size)
+
+        # ── Step 4: Merge into active list (Jaccard persistence) ──────────
+        self._merge_zones(new_zones)
+
+        # ── Step 5: Update intersection counts ───────────────────────────
+        self._update_intersection_counts(cur)
+
+        # ── Step 6: Invalidation ─────────────────────────────────────────
+        self._invalidate_zones()
+
+        # ── Step 7: Proximity filter — output only, internals unchanged ──
+        close       = float(cur["Close"])
+        current_atr = self._atr(df)
+        visible     = self._proximity_filter(self._active_zones, close, current_atr)
+
+        # ── Step 8: Consolidate nearby/overlapping visible zones ──────────
+        return {
+            "hvn_zones": self._consolidate_output(visible, bucket_size),
+            "all_active": [
+                {
+                    "zone_high":          round(z.zone_high,   4),
+                    "zone_low":           round(z.zone_low,    4),
+                    "zone_volume":        round(z.zone_volume, 2),
+                    "intersection_count": z.intersection_count,
+                }
+                for z in self._active_zones
+            ],
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Backtest convenience wrapper
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def run_backtest(self, df: pd.DataFrame) -> List[Dict]:
+        """
+        Run the indicator bar-by-bar over a complete historical dataset,
+        exactly replicating live bar-by-bar behaviour.
+
+        Returns
+        -------
+        list of dicts, one per bar:
+            {
+                "timestamp": <bar index label>,
+                "hvn_zones": [...],
+            }
+        """
+        self.reset()
+        results = []
+        for i in range(1, len(df) + 1):
+            snapshot = self.update(df.iloc[:i])
+            results.append({"timestamp": df.index[i - 1], **snapshot})
+        return results
+
+
+4. fourth s/r 
+
+-  elliot wave
